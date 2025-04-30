@@ -35,8 +35,9 @@ public class GoogleDistanceMatrixService {
                 .mode(travelMode)
                 .await();
 
-        // 결과 반환
-        if (distanceMatrix.rows.length > 0 && distanceMatrix.rows[0].elements.length > 0) {
+        if (distanceMatrix.rows.length > 0 && distanceMatrix.rows[0].elements.length > 0 &&
+                distanceMatrix.rows[0].elements[0] != null &&
+                "OK".equals(distanceMatrix.rows[0].elements[0].status.toString())) {
             return distanceMatrix.rows[0].elements[0].distance.inMeters;
         }
 
@@ -66,7 +67,18 @@ public class GoogleDistanceMatrixService {
                 if (i == j) {
                     result[i][j] = 0; // 같은 위치는 거리 0
                 } else {
-                    result[i][j] = distanceMatrix.rows[i].elements[j].distance.inMeters;
+                    if (distanceMatrix.rows[i].elements[j] != null &&
+                            "OK".equals(distanceMatrix.rows[i].elements[j].status.toString())) {
+                        result[i][j] = distanceMatrix.rows[i].elements[j].distance.inMeters;
+                    } else {
+                        // 거리 요청 실패 로그 출력
+                        String status = distanceMatrix.rows[i].elements[j] != null
+                                ? distanceMatrix.rows[i].elements[j].status.toString()
+                                : "NULL";
+                        System.out.printf("[거리 계산 실패] from[%d] to[%d] - status: %s%n", i, j, status);
+
+                        result[i][j] = -1; // 실패한 거리 요청은 -1로 처리
+                    }
                 }
             }
         }

@@ -27,7 +27,14 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
+                        // 기존 OAuth2 접근 허용 경로
                         .requestMatchers("/", "/oauth2/**", "/login/**", "/api/user").permitAll()
+                        // Swagger UI 리소스에 대한 접근 허용
+                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html", "/api-docs/**").permitAll()
+                        // API 엔드포인트 접근 허용 (테스트를 위해)
+                        .requestMatchers("/api/**").permitAll()
+                        // H2 콘솔 접근 허용 (개발 환경용, 필요시)
+                        .requestMatchers("/h2-console/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2Login(oauth2 -> oauth2
                         .userInfoEndpoint(userInfo -> userInfo
@@ -37,6 +44,9 @@ public class SecurityConfig {
                         }))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)));
+
+        // H2 콘솔 사용을 위한 추가 설정 (필요시)
+        http.headers(headers -> headers.frameOptions(frameOptions -> frameOptions.disable()));
 
         return http.build();
     }
