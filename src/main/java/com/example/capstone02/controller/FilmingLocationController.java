@@ -90,7 +90,7 @@ public class FilmingLocationController {
     public ResponseEntity<List<FilmingLocation>> getLocationsByMovie(
             @Parameter(description = "영화 ID", required = true) @PathVariable Long movieId) {
 
-        List<FilmingLocation> locations = locationRepository.findByMovieId(movieId);
+        List<FilmingLocation> locations = locationRepository.findByMovie_Id(movieId);
         return ResponseEntity.ok(locations);
     }
 }

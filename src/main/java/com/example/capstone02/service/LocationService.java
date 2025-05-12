@@ -54,7 +54,7 @@ public class LocationService {
      * 특정 영화의 모든 촬영지 간의 거리 행렬 계산
      */
     public List<LocationDistanceDTO> calculateDistanceMatrixForMovie(Long movieId, TravelMode travelMode) throws Exception {
-        List<FilmingLocation> locations = locationRepository.findByMovieId(movieId);
+        List<FilmingLocation> locations = locationRepository.findByMovie_Id(movieId);
 
         if (locations.isEmpty()) {
             throw new RuntimeException("해당 영화의 촬영지가 없습니다. Movie ID: " + movieId);

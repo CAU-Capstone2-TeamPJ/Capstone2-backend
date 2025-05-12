@@ -1,32 +1,69 @@
 package com.example.capstone02.entity;
 
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import lombok.*;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "movies")
 @Getter
 @Setter
 @NoArgsConstructor
+@AllArgsConstructor
+@Builder
+@Table(name = "movies")
 public class Movie {
-
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Long id; // TMDB의 영화 ID를 그대로 사용
 
+    @Column(nullable = false)
     private String title;
 
-    private Integer releaseYear;
+    @Column(columnDefinition = "TEXT")
+    private String overview;
 
-    private String director;
+    private String posterPath;
+    private String backdropPath;
+    private LocalDate releaseDate;
+    private Double voteAverage;
+    private Integer voteCount;
+    private String originalTitle;
+
+    @ElementCollection
+    @CollectionTable(name = "movie_genres", joinColumns = @JoinColumn(name = "movie_id"))
+    private List<Genre> genres = new ArrayList<>();
+
+    @ElementCollection
+    @CollectionTable(name = "movie_cast", joinColumns = @JoinColumn(name = "movie_id"))
+    private List<Cast> cast = new ArrayList<>();
 
     @OneToMany(mappedBy = "movie", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<FilmingLocation> filmingLocations = new ArrayList<>();
 
-    // 생성자, 기타 메서드 등 필요한 코드 추가
+    @Embeddable
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Genre {
+        private Integer id;
+        private String name;
+    }
+
+    @Embeddable
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Cast {
+        private Long id;
+        private String name;
+
+        @Column(name = "character_name") // MySQL 예약어 회피
+        private String character;
+
+        private String profilePath;
+    }
 }

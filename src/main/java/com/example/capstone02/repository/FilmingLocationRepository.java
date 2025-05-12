@@ -8,5 +8,6 @@ import java.util.List;
 
 @Repository
 public interface FilmingLocationRepository extends JpaRepository<FilmingLocation, Long> {
-    List<FilmingLocation> findByMovieId(Long movieId);
+    // 수정: movie_movieId -> movie_id (Movie 엔티티의 id 필드에 맞게 수정)
+    List<FilmingLocation> findByMovie_Id(Long movieId);
 }
