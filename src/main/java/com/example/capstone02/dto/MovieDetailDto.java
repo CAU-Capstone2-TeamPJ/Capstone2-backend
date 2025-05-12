@@ -25,6 +25,9 @@ public class MovieDetailDto {
     private LocalDate releaseDate;
     private Double voteAverage;
     private Integer voteCount;
+    private String director;
+    private String directorProfilePath;
+    private Long directorId;
     private List<GenreDto> genres = new ArrayList<>();
     private List<CastDto> cast = new ArrayList<>();
     private List<ImageDto> images = new ArrayList<>();
@@ -91,6 +94,9 @@ public class MovieDetailDto {
                 .releaseDate(movie.getReleaseDate())
                 .voteAverage(movie.getVoteAverage())
                 .voteCount(movie.getVoteCount())
+                .director(movie.getDirector())
+                .directorProfilePath(movie.getDirectorProfilePath())
+                .directorId(movie.getDirectorId())
                 .genres(genreDtos)
                 .cast(castDtos)
                 .images(imageDtos)

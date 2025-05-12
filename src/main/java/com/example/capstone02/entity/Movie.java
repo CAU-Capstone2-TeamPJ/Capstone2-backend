@@ -31,6 +31,11 @@ public class Movie {
     private Integer voteCount;
     private String originalTitle;
 
+    // 감독 정보 추가
+    private String director;
+    private String directorProfilePath;
+    private Long directorId;
+
     @ElementCollection
     @CollectionTable(name = "movie_genres", joinColumns = @JoinColumn(name = "movie_id"))
     private List<Genre> genres = new ArrayList<>();

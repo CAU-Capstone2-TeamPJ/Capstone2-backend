@@ -43,6 +43,7 @@ public class MovieDetailResponseDto {
     @Data
     public static class Credits {
         private List<Cast> cast;
+        private List<Crew> crew;  // 감독 등 제작진 정보
     }
 
     @Data
@@ -55,6 +56,18 @@ public class MovieDetailResponseDto {
 
         @JsonProperty("profile_path")
         private String profilePath;
+    }
+
+    @Data
+    public static class Crew {
+        private Long id;
+        private String name;
+
+        @JsonProperty("profile_path")
+        private String profilePath;
+
+        private String department;
+        private String job;
     }
 
     @Data
