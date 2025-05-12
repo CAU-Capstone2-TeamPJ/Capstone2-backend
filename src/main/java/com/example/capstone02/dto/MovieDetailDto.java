@@ -27,6 +27,7 @@ public class MovieDetailDto {
     private Integer voteCount;
     private List<GenreDto> genres = new ArrayList<>();
     private List<CastDto> cast = new ArrayList<>();
+    private List<ImageDto> images = new ArrayList<>();
 
     @Data
     @NoArgsConstructor
@@ -42,8 +43,19 @@ public class MovieDetailDto {
     public static class CastDto {
         private Long id;
         private String name;
-        private String character; // 이름은 유지 (DTO에서는 문제 없음)
+        private String character;
         private String profilePath;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ImageDto {
+        private String filePath;
+        private Double aspectRatio;
+        private Integer height;
+        private Integer width;
+        private String type;  // "BACKDROP" 또는 "POSTER"
     }
 
     // Entity -> DTO 변환
@@ -54,6 +66,19 @@ public class MovieDetailDto {
 
         List<CastDto> castDtos = movie.getCast().stream()
                 .map(cast -> new CastDto(cast.getId(), cast.getName(), cast.getCharacter(), cast.getProfilePath()))
+                .collect(Collectors.toList());
+
+        // 이미지 변환 (최대 10개의 배경 이미지만 포함)
+        List<ImageDto> imageDtos = movie.getImages().stream()
+                .filter(image -> image.getType() == Movie.MovieImage.ImageType.BACKDROP)
+                .limit(10)
+                .map(image -> new ImageDto(
+                        image.getFilePath(),
+                        image.getAspectRatio(),
+                        image.getHeight(),
+                        image.getWidth(),
+                        image.getType().name()
+                ))
                 .collect(Collectors.toList());
 
         return MovieDetailDto.builder()
@@ -68,6 +93,7 @@ public class MovieDetailDto {
                 .voteCount(movie.getVoteCount())
                 .genres(genreDtos)
                 .cast(castDtos)
+                .images(imageDtos)
                 .build();
     }
 }

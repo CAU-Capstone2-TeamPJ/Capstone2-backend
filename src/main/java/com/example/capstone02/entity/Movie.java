@@ -39,6 +39,10 @@ public class Movie {
     @CollectionTable(name = "movie_cast", joinColumns = @JoinColumn(name = "movie_id"))
     private List<Cast> cast = new ArrayList<>();
 
+    @ElementCollection
+    @CollectionTable(name = "movie_images", joinColumns = @JoinColumn(name = "movie_id"))
+    private List<MovieImage> images = new ArrayList<>();
+
     @OneToMany(mappedBy = "movie", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<FilmingLocation> filmingLocations = new ArrayList<>();
 
@@ -65,5 +69,26 @@ public class Movie {
         private String character;
 
         private String profilePath;
+    }
+
+    @Embeddable
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class MovieImage {
+        private String filePath;
+        private Double aspectRatio;
+        private Integer height;
+        private Integer width;
+        private Double voteAverage;
+        private Integer voteCount;
+
+        @Enumerated(EnumType.STRING)
+        private ImageType type;
+
+        public enum ImageType {
+            BACKDROP, POSTER
+        }
     }
 }

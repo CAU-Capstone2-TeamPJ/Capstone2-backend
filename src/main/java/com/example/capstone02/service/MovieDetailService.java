@@ -33,8 +33,9 @@ public class MovieDetailService {
     public Mono<MovieDetailDto> fetchAndSaveMovieDetail(Long movieId) {
         String url = UriComponentsBuilder.fromHttpUrl(baseUrl + "/movie/" + movieId)
                 .queryParam("api_key", apiKey)
-                .queryParam("append_to_response", "credits")
                 .queryParam("language", "ko-KR")
+                .queryParam("append_to_response", "credits,images")
+                .queryParam("images.include_image_language", "en,null")
                 .build()
                 .toUriString();
 
@@ -82,6 +83,42 @@ public class MovieDetailService {
                     .collect(Collectors.toList());
         }
 
+        // 이미지 변환
+        List<Movie.MovieImage> images = new ArrayList<>();
+        if (dto.getImages() != null) {
+            // 배경 이미지 처리
+            if (dto.getImages().getBackdrops() != null) {
+                List<Movie.MovieImage> backdrops = dto.getImages().getBackdrops().stream()
+                        .map(image -> new Movie.MovieImage(
+                                image.getFilePath(),
+                                image.getAspectRatio(),
+                                image.getHeight(),
+                                image.getWidth(),
+                                image.getVoteAverage(),
+                                image.getVoteCount(),
+                                Movie.MovieImage.ImageType.BACKDROP
+                        ))
+                        .collect(Collectors.toList());
+                images.addAll(backdrops);
+            }
+
+            // 포스터 이미지 처리
+            if (dto.getImages().getPosters() != null) {
+                List<Movie.MovieImage> posters = dto.getImages().getPosters().stream()
+                        .map(image -> new Movie.MovieImage(
+                                image.getFilePath(),
+                                image.getAspectRatio(),
+                                image.getHeight(),
+                                image.getWidth(),
+                                image.getVoteAverage(),
+                                image.getVoteCount(),
+                                Movie.MovieImage.ImageType.POSTER
+                        ))
+                        .collect(Collectors.toList());
+                images.addAll(posters);
+            }
+        }
+
         return Movie.builder()
                 .id(dto.getId())
                 .title(dto.getTitle())
@@ -94,6 +131,7 @@ public class MovieDetailService {
                 .voteCount(dto.getVoteCount())
                 .genres(genres)
                 .cast(cast)
+                .images(images)
                 .build();
     }
 }

@@ -32,6 +32,7 @@ public class MovieDetailResponseDto {
 
     private List<Genre> genres;
     private Credits credits;
+    private Images images;
 
     @Data
     public static class Genre {
@@ -50,9 +51,36 @@ public class MovieDetailResponseDto {
         private String name;
 
         @JsonProperty("character")
-        private String character; // JSON으로부터 매핑되는 필드명은 유지
+        private String character;
 
         @JsonProperty("profile_path")
         private String profilePath;
+    }
+
+    @Data
+    public static class Images {
+        private List<Image> backdrops;
+        private List<Image> posters;
+    }
+
+    @Data
+    public static class Image {
+        @JsonProperty("file_path")
+        private String filePath;
+
+        @JsonProperty("aspect_ratio")
+        private Double aspectRatio;
+
+        private Integer height;
+        private Integer width;
+
+        @JsonProperty("vote_average")
+        private Double voteAverage;
+
+        @JsonProperty("vote_count")
+        private Integer voteCount;
+
+        @JsonProperty("iso_639_1")
+        private String languageCode;
     }
 }
