@@ -1,96 +1,115 @@
 package com.example.capstone02.controller;
 
 import com.example.capstone02.entity.FilmingLocation;
-import com.example.capstone02.repository.FilmingLocationRepository;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.media.Content;
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.example.capstone02.service.FilmingLocationService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/filming-locations")
-@Tag(name = "촬영지 관리", description = "촬영지 정보 관리 API")
+@RequiredArgsConstructor
+@Slf4j
 public class FilmingLocationController {
 
-    private final FilmingLocationRepository locationRepository;
+    private final FilmingLocationService filmingLocationService;
 
-    @Autowired
-    public FilmingLocationController(FilmingLocationRepository locationRepository) {
-        this.locationRepository = locationRepository;
-    }
-
-    @Operation(summary = "모든 촬영지 조회", description = "시스템에 등록된 모든 촬영지 정보를 조회합니다.")
-    @GetMapping
-    public ResponseEntity<List<FilmingLocation>> getAllLocations() {
-        return ResponseEntity.ok(locationRepository.findAll());
-    }
-
-    @Operation(summary = "촬영지 상세 조회", description = "ID로 특정 촬영지 정보를 조회합니다.")
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "촬영지 조회 성공",
-                    content = @Content(schema = @Schema(implementation = FilmingLocation.class))),
-            @ApiResponse(responseCode = "404", description = "촬영지를 찾을 수 없음", content = @Content)
-    })
-    @GetMapping("/{id}")
-    public ResponseEntity<FilmingLocation> getLocationById(
-            @Parameter(description = "촬영지 ID", required = true) @PathVariable Long id) {
-        return locationRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    @Operation(summary = "촬영지 등록", description = "새로운 촬영지 정보를 등록합니다.")
-    @PostMapping
-    public ResponseEntity<FilmingLocation> createLocation(
-            @RequestBody FilmingLocation location) {
-        return ResponseEntity.ok(locationRepository.save(location));
-    }
-
-    @Operation(summary = "촬영지 정보 수정", description = "기존 촬영지 정보를 수정합니다.")
-    @PutMapping("/{id}")
-    public ResponseEntity<FilmingLocation> updateLocation(
-            @Parameter(description = "촬영지 ID", required = true) @PathVariable Long id,
-            @RequestBody FilmingLocation locationDetails) {
-
-        return locationRepository.findById(id)
-                .map(location -> {
-                    location.setName(locationDetails.getName());
-                    location.setAddress(locationDetails.getAddress());
-                    location.setLatitude(locationDetails.getLatitude());
-                    location.setLongitude(locationDetails.getLongitude());
-                    location.setMovie(locationDetails.getMovie());
-                    return ResponseEntity.ok(locationRepository.save(location));
-                })
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    @Operation(summary = "촬영지 삭제", description = "촬영지 정보를 삭제합니다.")
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteLocation(
-            @Parameter(description = "촬영지 ID", required = true) @PathVariable Long id) {
-
-        return locationRepository.findById(id)
-                .map(location -> {
-                    locationRepository.delete(location);
-                    return ResponseEntity.ok().<Void>build();
-                })
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    @Operation(summary = "영화별 촬영지 목록 조회", description = "특정 영화의 모든 촬영지 정보를 조회합니다.")
+    /**
+     * 영화 ID로 촬영지 정보 조회
+     * DB에 없으면 파이썬 서버에서 가져오기
+     */
     @GetMapping("/movie/{movieId}")
-    public ResponseEntity<List<FilmingLocation>> getLocationsByMovie(
-            @Parameter(description = "영화 ID", required = true) @PathVariable Long movieId) {
+    public ResponseEntity<List<FilmingLocationDto>> getFilmingLocationsByMovieId(@PathVariable Long movieId) {
+        List<FilmingLocation> filmingLocations = filmingLocationService.getFilmingLocationsByMovieId(movieId);
 
-        List<FilmingLocation> locations = locationRepository.findByMovie_Id(movieId);
-        return ResponseEntity.ok(locations);
+        // 촬영지 정보가 없으면 파이썬 서버에서 가져오기
+        if (filmingLocations.isEmpty()) {
+            log.info("영화 ID {}의 촬영지 정보가 없어 파이썬 서버에서 가져옵니다", movieId);
+            filmingLocations = filmingLocationService.fetchAndSaveFilmingLocations(movieId);
+        }
+
+        // 엔티티를 DTO로 변환
+        List<FilmingLocationDto> locationDtos = filmingLocations.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(locationDtos);
+    }
+
+    /**
+     * 영화 ID로 촬영지 정보를 강제로 파이썬 서버에서 새로 가져오기
+     */
+    @GetMapping("/fetch/movie/{movieId}")
+    public ResponseEntity<List<FilmingLocationDto>> fetchFilmingLocationsByMovieId(@PathVariable Long movieId) {
+        List<FilmingLocation> filmingLocations = filmingLocationService.fetchAndSaveFilmingLocations(movieId);
+
+        // 엔티티를 DTO로 변환
+        List<FilmingLocationDto> locationDtos = filmingLocations.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(locationDtos);
+    }
+
+    /**
+     * 특정 위치 주변의 촬영지 검색 (선택적 기능)
+     */
+    @GetMapping("/nearby")
+    public ResponseEntity<List<FilmingLocationDto>> getNearbyLocations(
+            @RequestParam Double latitude,
+            @RequestParam Double longitude,
+            @RequestParam(defaultValue = "10.0") Double distance) {
+
+        List<FilmingLocation> nearbyLocations = filmingLocationService.findNearbyLocations(
+                latitude, longitude, distance);
+
+        // 엔티티를 DTO로 변환
+        List<FilmingLocationDto> locationDtos = nearbyLocations.stream()
+                .map(this::convertToDto)
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(locationDtos);
+    }
+
+    // 엔티티를 DTO로 변환하는 헬퍼 메서드
+    private FilmingLocationDto convertToDto(FilmingLocation location) {
+        return FilmingLocationDto.builder()
+                .id(location.getId())
+                .movieId(location.getMovie().getId())
+                .movieTitle(location.getMovie().getTitle())
+                .name(location.getName())
+                .country(location.getCountry())
+                .description(location.getDescription())
+                .keywords(location.getKeywords())
+                .latitude(location.getLatitude())
+                .longitude(location.getLongitude())
+                .address(location.getAddress())
+                .mentionRate(location.getMentionRate())
+                .mentionCount(location.getMentionCount())
+                .build();
+    }
+
+    // 응답용 DTO
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class FilmingLocationDto {
+        private Long id;
+        private Long movieId;
+        private String movieTitle;
+        private String name;
+        private String country;
+        private String description;
+        private List<String> keywords;
+        private Double latitude;
+        private Double longitude;
+        private String address;
+        private Double mentionRate;
+        private Integer mentionCount;
     }
 }
