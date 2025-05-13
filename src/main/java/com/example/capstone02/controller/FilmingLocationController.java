@@ -55,26 +55,6 @@ public class FilmingLocationController {
         return ResponseEntity.ok(locationDtos);
     }
 
-    /**
-     * 특정 위치 주변의 촬영지 검색 (선택적 기능)
-     */
-    @GetMapping("/nearby")
-    public ResponseEntity<List<FilmingLocationDto>> getNearbyLocations(
-            @RequestParam Double latitude,
-            @RequestParam Double longitude,
-            @RequestParam(defaultValue = "10.0") Double distance) {
-
-        List<FilmingLocation> nearbyLocations = filmingLocationService.findNearbyLocations(
-                latitude, longitude, distance);
-
-        // 엔티티를 DTO로 변환
-        List<FilmingLocationDto> locationDtos = nearbyLocations.stream()
-                .map(this::convertToDto)
-                .collect(Collectors.toList());
-
-        return ResponseEntity.ok(locationDtos);
-    }
-
     // 엔티티를 DTO로 변환하는 헬퍼 메서드
     private FilmingLocationDto convertToDto(FilmingLocation location) {
         return FilmingLocationDto.builder()
@@ -84,12 +64,12 @@ public class FilmingLocationController {
                 .name(location.getName())
                 .country(location.getCountry())
                 .description(location.getDescription())
-                .keywords(location.getKeywords())
-                .latitude(location.getLatitude())
-                .longitude(location.getLongitude())
                 .address(location.getAddress())
+                .durationTime(location.getDurationTime())
                 .mentionRate(location.getMentionRate())
                 .mentionCount(location.getMentionCount())
+                .recommendationKeywords(location.getRecommendationKeywords())
+                .nearbyKeywords(location.getNearbyKeywords())
                 .build();
     }
 
@@ -105,11 +85,11 @@ public class FilmingLocationController {
         private String name;
         private String country;
         private String description;
-        private List<String> keywords;
-        private Double latitude;
-        private Double longitude;
         private String address;
+        private Double durationTime;
         private Double mentionRate;
         private Integer mentionCount;
+        private List<String> recommendationKeywords;
+        private List<String> nearbyKeywords;
     }
 }

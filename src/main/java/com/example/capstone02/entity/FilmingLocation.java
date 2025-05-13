@@ -35,16 +35,20 @@ public class FilmingLocation {
 
     private String address;     // 도로명 주소
 
-    private Double latitude;    // 위도
-    private Double longitude;   // 경도
+    private Double durationTime; // 평균 체류 시간 (시간 단위)
 
     private Double mentionRate; // 언급율
     private Integer mentionCount; // 언급된 수
 
     @ElementCollection
-    @CollectionTable(name = "location_keywords", joinColumns = @JoinColumn(name = "location_id"))
+    @CollectionTable(name = "location_recommendation_keywords", joinColumns = @JoinColumn(name = "location_id"))
     @Column(name = "keyword")
-    private List<String> keywords = new ArrayList<>(); // 키워드 리스트
+    private List<String> recommendationKeywords = new ArrayList<>(); // 추천 키워드 리스트
+
+    @ElementCollection
+    @CollectionTable(name = "location_nearby_keywords", joinColumns = @JoinColumn(name = "location_id"))
+    @Column(name = "keyword")
+    private List<String> nearbyKeywords = new ArrayList<>(); // 주변 키워드 리스트
 
     @CreationTimestamp
     private LocalDateTime createdAt;

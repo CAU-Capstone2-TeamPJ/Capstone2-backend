@@ -79,16 +79,20 @@ public class FilmingLocationService {
                             .name(locationInfo.getName())
                             .country(locationInfo.getCountry())
                             .description(locationInfo.getDescription())
-                            .latitude(locationInfo.getLatitude())
-                            .longitude(locationInfo.getLongitude())
                             .address(locationInfo.getAddress())
+                            .durationTime(locationInfo.getDurationTime())
                             .mentionRate(locationInfo.getMentionRate())
                             .mentionCount(locationInfo.getMentionCount())
                             .build();
 
-                    // 키워드 설정
-                    if (locationInfo.getKeywords() != null) {
-                        location.setKeywords(locationInfo.getKeywords());
+                    // 추천 키워드 설정
+                    if (locationInfo.getRecommendationKeywords() != null) {
+                        location.setRecommendationKeywords(locationInfo.getRecommendationKeywords());
+                    }
+
+                    // 주변 키워드 설정
+                    if (locationInfo.getNearbyKeywords() != null) {
+                        location.setNearbyKeywords(locationInfo.getNearbyKeywords());
                     }
 
                     return location;
@@ -104,13 +108,5 @@ public class FilmingLocationService {
     @Transactional(readOnly = true)
     public List<FilmingLocation> getFilmingLocationsByMovieId(Long movieId) {
         return filmingLocationRepository.findByMovieId(movieId);
-    }
-
-    /**
-     * 특정 위치 주변의 촬영지 검색 (선택적 기능)
-     */
-    @Transactional(readOnly = true)
-    public List<FilmingLocation> findNearbyLocations(double latitude, double longitude, double distanceInKm) {
-        return filmingLocationRepository.findLocationsByGeoDistance(latitude, longitude, distanceInKm);
     }
 }
