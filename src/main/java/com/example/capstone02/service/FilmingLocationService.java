@@ -210,4 +210,13 @@ public class FilmingLocationService {
         // 주변 장소 ID 저장
         location.setNearbyPlaceIds(nearbyPlaceIds);
     }
+
+    /**
+     * 영화 ID로 영화 제목 조회
+     */
+    public String getMovieTitle(Long movieId) {
+        return movieRepository.findById(movieId)
+                .map(Movie::getTitle)
+                .orElse("Unknown Movie");
+    }
 }
