@@ -3,20 +3,22 @@ package com.example.capstone02.controller;
 import com.example.capstone02.dto.TripPlanRequestDto;
 import com.example.capstone02.dto.TripPlanResponseDto;
 import com.example.capstone02.entity.TripPlan;
+import com.example.capstone02.entity.User;
+import com.example.capstone02.repository.UserRepository;
 import com.example.capstone02.service.TripPlanService;
 import com.example.capstone02.service.TripPlanningService;
 import com.example.capstone02.util.ConceptKeywordMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/trip-plans")
@@ -27,15 +29,13 @@ public class TripPlanningController {
     private final TripPlanningService tripPlanningService;
     private final TripPlanService tripPlanService;
     private final ConceptKeywordMapper conceptKeywordMapper;
+    private final UserRepository userRepository;
 
     /**
      * 여행 경로 계획 생성 API - 생성 후 자동 저장
      */
     @PostMapping
-    public ResponseEntity<TripPlanResponseWithIdDto> createTripPlan(
-            @RequestBody TripPlanRequestDto request,
-            @AuthenticationPrincipal OAuth2User principal) {
-
+    public ResponseEntity<TripPlanResponseWithIdDto> createTripPlan(@RequestBody TripPlanRequestDto request) {
         log.info("여행 경로 계획 요청: {}", request);
 
         // 필수 파라미터 확인
@@ -49,11 +49,9 @@ public class TripPlanningController {
         // 자동 저장 - 이름은 "영화 제목 + 컨셉 + UUID"로 자동 생성
         String planName = generatePlanName(request);
 
-        // 사용자 이메일 확인
-        String userEmail = null;
-        if (principal != null) {
-            userEmail = principal.getAttribute("email");
-        }
+        // 현재 인증된 사용자 정보 가져오기
+        String userEmail = getCurrentUserEmail();
+        log.info("현재 인증된 사용자 이메일: {}", userEmail);
 
         // 여행 계획 저장
         TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(request, planName, userEmail);
@@ -69,6 +67,44 @@ public class TripPlanningController {
         );
 
         return ResponseEntity.ok(responseWithId);
+    }
+
+    /**
+     * 현재 인증된 사용자의 이메일 가져오기
+     */
+    private String getCurrentUserEmail() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() ||
+                "anonymousUser".equals(authentication.getPrincipal())) {
+            log.warn("인증된 사용자 정보가 없습니다");
+            return null;
+        }
+
+        Object principal = authentication.getPrincipal();
+        log.info("인증 주체 정보: 클래스={}, 값={}",
+                principal.getClass().getName(), principal);
+
+        String email = null;
+
+        // JWT 토큰 인증의 경우 principal이 이메일 문자열
+        if (principal instanceof String) {
+            email = (String) principal;
+        }
+        // Spring Security UserDetails 사용 시
+        else if (principal instanceof UserDetails) {
+            email = ((UserDetails) principal).getUsername();
+        }
+
+        if (email != null) {
+            // 사용자가 실제로 존재하는지 확인
+            Optional<User> userOpt = userRepository.findByEmail(email);
+            if (!userOpt.isPresent()) {
+                log.warn("이메일 {}에 해당하는 사용자가 데이터베이스에 없습니다", email);
+                return null;
+            }
+        }
+
+        return email;
     }
 
     /**
