@@ -32,6 +32,8 @@ public class FilmingLocation {
 
     private String country;     // 국가
 
+    private String city;        // 도시
+
     @Column(columnDefinition = "TEXT")
     private String description; // 설명
 
@@ -74,4 +76,41 @@ public class FilmingLocation {
 
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    // City 필드가 없는 경우, 주소에서 도시 정보 추출
+    public String getCity() {
+        if (city != null && !city.isEmpty()) {
+            return city;
+        }
+
+        // 주소에서 도시 정보 추출 시도
+        if (address != null && !address.isEmpty()) {
+            // 한국 주소 형식 처리
+            if (country != null && country.equals("대한민국")) {
+                // 서울특별시, 부산광역시 등 '시' 단위로 추출
+                if (address.contains("특별시") || address.contains("광역시")) {
+                    String[] parts = address.split(" ");
+                    if (parts.length > 0) {
+                        return parts[0]; // 첫 번째 부분 (서울특별시, 부산광역시 등)
+                    }
+                }
+
+                // '도' 단위의 경우 '시/군/구' 단위까지 포함
+                for (String part : address.split(" ")) {
+                    if (part.endsWith("시") || part.endsWith("군") || part.endsWith("구")) {
+                        return part;
+                    }
+                }
+            } else {
+                // 해외 주소의 경우 단순하게 첫 번째 부분 반환
+                String[] parts = address.split(" ");
+                if (parts.length > 1) {
+                    return parts[1]; // 일반적으로 두 번째 부분이 도시인 경우가 많음
+                }
+            }
+        }
+
+        // 추출 실패시 국가 반환
+        return country != null ? country : "Unknown";
+    }
 }
