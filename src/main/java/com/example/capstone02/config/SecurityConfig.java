@@ -28,7 +28,7 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         // 기존 OAuth2 접근 허용 경로
-                        .requestMatchers("/", "/oauth2/**", "/login/**", "/api/user").permitAll()
+                        .requestMatchers("/", "/oauth2/**", "/login/**", "/api/user", "/api/user/check").permitAll()
                         // Swagger UI 리소스에 대한 접근 허용
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html", "/api-docs/**").permitAll()
                         // API 엔드포인트 접근 허용 (테스트를 위해)

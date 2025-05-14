@@ -9,6 +9,8 @@ import com.example.capstone02.util.ConceptKeywordMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -30,7 +32,10 @@ public class TripPlanningController {
      * 여행 경로 계획 생성 API - 생성 후 자동 저장
      */
     @PostMapping
-    public ResponseEntity<TripPlanResponseWithIdDto> createTripPlan(@RequestBody TripPlanRequestDto request) {
+    public ResponseEntity<TripPlanResponseWithIdDto> createTripPlan(
+            @RequestBody TripPlanRequestDto request,
+            @AuthenticationPrincipal OAuth2User principal) {
+
         log.info("여행 경로 계획 요청: {}", request);
 
         // 필수 파라미터 확인
@@ -43,7 +48,15 @@ public class TripPlanningController {
 
         // 자동 저장 - 이름은 "영화 제목 + 컨셉 + UUID"로 자동 생성
         String planName = generatePlanName(request);
-        TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(request, planName);
+
+        // 사용자 이메일 확인
+        String userEmail = null;
+        if (principal != null) {
+            userEmail = principal.getAttribute("email");
+        }
+
+        // 여행 계획 저장
+        TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(request, planName, userEmail);
 
         // 응답 DTO 생성 (기존 TripPlanResponseDto + 저장된 계획 ID)
         TripPlanResponseWithIdDto responseWithId = new TripPlanResponseWithIdDto(
@@ -61,16 +74,6 @@ public class TripPlanningController {
     /**
      * 계획 이름 자동 생성
      */
-//    private String generatePlanName(TripPlanRequestDto request) {
-//        // 기본 이름 컨셉 조합
-//        String concept = request.getConcept() != null ? request.getConcept() : "여행 계획";
-//        String country = request.getCountry() != null ? request.getCountry() : "";
-//
-//        // UUID의 일부만 사용해서 고유한 이름 생성
-//        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
-//
-//        return String.format("%s의 %s 여행 (%s)", country, concept, uniqueId);
-//    }
     private String generatePlanName(TripPlanRequestDto request) {
         // 국가
         String country = request.getCountry() != null ? request.getCountry() : "";

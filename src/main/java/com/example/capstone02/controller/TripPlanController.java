@@ -6,6 +6,8 @@ import com.example.capstone02.service.TripPlanService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,17 +22,30 @@ public class TripPlanController {
     private final TripPlanService tripPlanService;
 
     /**
-     * 여행 계획 저장
+     * 여행 계획 저장 (인증된 사용자만)
      */
     @PostMapping
-    public ResponseEntity<TripPlan> saveTripPlan(@RequestBody SaveTripPlanRequestDto request) {
+    public ResponseEntity<TripPlan> saveTripPlan(
+            @RequestBody SaveTripPlanRequestDto request,
+            @AuthenticationPrincipal OAuth2User principal) {
+
         log.info("여행 계획 저장 요청: {}", request);
 
         if (request.getTripPlanRequest() == null || request.getName() == null || request.getName().isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
 
-        TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(request.getTripPlanRequest(), request.getName());
+        // 사용자 이메일 가져오기
+        String userEmail = null;
+        if (principal != null) {
+            userEmail = principal.getAttribute("email");
+        }
+
+        TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(
+                request.getTripPlanRequest(),
+                request.getName(),
+                userEmail);
+
         return ResponseEntity.ok(savedPlan);
     }
 
@@ -71,6 +86,23 @@ public class TripPlanController {
     }
 
     /**
+     * 현재 로그인한 사용자의 여행 계획 조회
+     */
+    @GetMapping("/my-plans")
+    public ResponseEntity<List<TripPlan>> getMyTripPlans(@AuthenticationPrincipal OAuth2User principal) {
+        if (principal == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        String email = principal.getAttribute("email");
+        if (email == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        return ResponseEntity.ok(principal.getAttribute("user_trip_plans"));
+    }
+
+    /**
      * 모든 여행 계획 조회
      */
     @GetMapping
@@ -80,10 +112,36 @@ public class TripPlanController {
     }
 
     /**
-     * 여행 계획 삭제
+     * 여행 계획 삭제 (본인 소유만 가능)
      */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteTripPlan(@PathVariable Long id) {
+    public ResponseEntity<Void> deleteTripPlan(
+            @PathVariable Long id,
+            @AuthenticationPrincipal OAuth2User principal) {
+
+        if (principal == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // 삭제하려는 계획 조회
+        Optional<TripPlan> tripPlanOpt = tripPlanService.getTripPlanById(id);
+
+        if (tripPlanOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        TripPlan tripPlan = tripPlanOpt.get();
+
+        // 사용자 소유 확인 (본인 소유가 아니면 삭제 불가)
+        if (tripPlan.getUser() != null) {
+            String userEmail = principal.getAttribute("email");
+
+            // 사용자 이메일과 일치하지 않으면 삭제 불가
+            if (userEmail == null || !userEmail.equals(tripPlan.getUser().getEmail())) {
+                return ResponseEntity.status(403).build(); // 접근 권한 없음
+            }
+        }
+
         tripPlanService.deleteTripPlan(id);
         return ResponseEntity.noContent().build();
     }

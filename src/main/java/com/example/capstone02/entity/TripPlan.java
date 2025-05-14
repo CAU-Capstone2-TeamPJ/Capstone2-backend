@@ -31,6 +31,10 @@ public class TripPlan {
     private Integer totalLocations;      // 총 방문 장소 수
     private Integer totalTravelTimeMinutes; // 총 이동 시간 (분 단위)
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;                   // 사용자 (추가된 관계)
+
     @OneToMany(mappedBy = "tripPlan", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<TripDay> tripDays = new ArrayList<>();

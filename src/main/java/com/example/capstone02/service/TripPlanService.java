@@ -5,9 +5,12 @@ import com.example.capstone02.dto.TripPlanResponseDto;
 import com.example.capstone02.entity.TripDay;
 import com.example.capstone02.entity.TripLocation;
 import com.example.capstone02.entity.TripPlan;
+import com.example.capstone02.entity.User;
 import com.example.capstone02.repository.TripPlanRepository;
+import com.example.capstone02.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,18 +26,26 @@ public class TripPlanService {
     private final TripPlanRepository tripPlanRepository;
     private final TripPlanningService tripPlanningService;
     private final FilmingLocationService filmingLocationService;
+    private final UserRepository userRepository;
 
     /**
-     * 여행 계획 생성 및 저장
+     * 여행 계획 생성 및 저장 (사용자 정보 포함)
      */
     @Transactional
-    public TripPlan createAndSaveTripPlan(TripPlanRequestDto requestDto, String name) {
+    public TripPlan createAndSaveTripPlan(TripPlanRequestDto requestDto, String name, String userEmail) {
         try {
             // 여행 계획 생성
             TripPlanResponseDto planDto = tripPlanningService.createTripPlan(requestDto);
 
             // 영화 제목 조회
             String movieTitle = filmingLocationService.getMovieTitle(requestDto.getMovieId());
+
+            // 사용자 정보 조회
+            User user = null;
+            if (userEmail != null) {
+                user = userRepository.findByEmail(userEmail)
+                        .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + userEmail));
+            }
 
             // TripPlan 엔티티 생성
             TripPlan tripPlan = TripPlan.builder()
@@ -47,6 +58,7 @@ public class TripPlanService {
                     .totalDays(planDto.getTotalDays())
                     .totalLocations(planDto.getTotalLocations())
                     .totalTravelTimeMinutes(planDto.getTotalTravelTimeMinutes())
+                    .user(user) // 사용자 정보 추가
                     .build();
 
             // Empty collection 초기화
@@ -113,6 +125,14 @@ public class TripPlanService {
     }
 
     /**
+     * 기존 메소드 - 사용자 정보 없이 여행 계획 생성 (호환성 유지)
+     */
+    @Transactional
+    public TripPlan createAndSaveTripPlan(TripPlanRequestDto requestDto, String name) {
+        return createAndSaveTripPlan(requestDto, name, null);
+    }
+
+    /**
      * 여행 계획 조회
      */
     @Transactional(readOnly = true)
@@ -158,5 +178,13 @@ public class TripPlanService {
     @Transactional
     public void deleteTripPlan(Long id) {
         tripPlanRepository.deleteById(id);
+    }
+
+    /**
+     * 특정 사용자의 여행 계획 조회
+     */
+    @Transactional(readOnly = true)
+    public List<TripPlan> getTripPlansByUserId(Long userId) {
+        return tripPlanRepository.findByUserId(userId);
     }
 }
