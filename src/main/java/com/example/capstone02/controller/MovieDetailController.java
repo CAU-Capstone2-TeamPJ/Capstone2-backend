@@ -1,10 +1,14 @@
 package com.example.capstone02.controller;
 
 import com.example.capstone02.dto.MovieDetailDto;
+import com.example.capstone02.dto.MovieLikeDto;
 import com.example.capstone02.service.MovieDetailService;
+import com.example.capstone02.service.MovieLikeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,6 +21,7 @@ import java.util.Map;
 public class MovieDetailController {
 
     private final MovieDetailService movieDetailService;
+    private final MovieLikeService movieLikeService;
 
     /**
      * 영화 상세 정보를 조회하는 엔드포인트.
@@ -27,6 +32,15 @@ public class MovieDetailController {
         try {
             // 데이터베이스에서 영화 정보 조회 시도
             MovieDetailDto movieDetail = movieDetailService.getMovieDetail(movieId);
+
+            // 현재 사용자의 좋아요 상태 및 전체 좋아요 수 조회
+            String userEmail = getCurrentUserEmail();
+            MovieLikeDto likeInfo = movieLikeService.getLikeStatus(movieId, userEmail);
+
+            // 좋아요 정보 추가
+            movieDetail.setLikesCount(likeInfo.getLikesCount());
+            movieDetail.setIsLiked(likeInfo.getIsLiked());
+
             return ResponseEntity.ok(movieDetail);
         } catch (RuntimeException e) {
             // 데이터베이스에 정보가 없는 경우
@@ -128,5 +142,29 @@ public class MovieDetailController {
                 "totalCount", movieIds.size(),
                 "message", count + "개 영화에 대한 정보 요청이 시작되었습니다. 완료까지 몇 분이 소요될 수 있습니다."
         ));
+    }
+
+    /**
+     * 현재 인증된 사용자의 이메일 가져오기
+     */
+    private String getCurrentUserEmail() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() ||
+                "anonymousUser".equals(authentication.getPrincipal())) {
+            return null;
+        }
+
+        Object principal = authentication.getPrincipal();
+
+        // JWT 토큰 인증의 경우 principal이 이메일 문자열
+        if (principal instanceof String) {
+            return (String) principal;
+        }
+        // Spring Security UserDetails 사용 시
+        else if (principal instanceof org.springframework.security.core.userdetails.UserDetails) {
+            return ((org.springframework.security.core.userdetails.UserDetails) principal).getUsername();
+        }
+
+        return null;
     }
 }

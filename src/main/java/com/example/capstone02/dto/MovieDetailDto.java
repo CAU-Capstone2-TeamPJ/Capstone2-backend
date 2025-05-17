@@ -32,6 +32,10 @@ public class MovieDetailDto {
     private List<CastDto> cast = new ArrayList<>();
     private List<ImageDto> images = new ArrayList<>();
 
+    // 좋아요 관련 필드 추가
+    private Integer likesCount;
+    private Boolean isLiked;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -100,6 +104,8 @@ public class MovieDetailDto {
                 .genres(genreDtos)
                 .cast(castDtos)
                 .images(imageDtos)
+                .likesCount(0)  // 기본값 설정
+                .isLiked(false) // 기본값 설정
                 .build();
     }
 }
