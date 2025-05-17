@@ -57,6 +57,52 @@ public class FilmingLocationController {
     }
 
     /**
+     * 영화 ID로 촬영지 정보를 비동기적으로 요청하고 상태 반환
+     * 10분 이상 소요되는 작업을 위한 비동기 처리
+     */
+    @GetMapping("/async/movie/{movieId}")
+    public ResponseEntity<Map<String, Object>> requestFilmingLocationsAsync(@PathVariable Long movieId) {
+        // 기존에 정보가 있는지 확인
+        boolean hasData = !filmingLocationService.getFilmingLocationsByMovieId(movieId).isEmpty();
+
+        // 현재 처리 상태 확인
+        boolean isComplete = filmingLocationService.isProcessingComplete(movieId);
+
+        // 데이터가 없고 처리가 완료 상태이면 새로 요청
+        if (!hasData && isComplete) {
+            log.info("영화 ID {}에 대한 촬영지 정보 비동기 요청 시작", movieId);
+            filmingLocationService.requestFilmingLocationsAsync(movieId);
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "movieId", movieId,
+                "hasData", hasData,
+                "processing", !filmingLocationService.isProcessingComplete(movieId),
+                "message", hasData ?
+                        "데이터가 이미 존재합니다." :
+                        (isComplete ? "데이터 요청이 시작되었습니다. 몇 분 후에 확인해주세요." : "데이터 처리가 진행 중입니다.")
+        ));
+    }
+
+    /**
+     * 영화 ID로 촬영지 정보 처리 상태 확인
+     */
+    @GetMapping("/status/movie/{movieId}")
+    public ResponseEntity<Map<String, Object>> checkProcessingStatus(@PathVariable Long movieId) {
+        boolean hasData = !filmingLocationService.getFilmingLocationsByMovieId(movieId).isEmpty();
+        boolean isComplete = filmingLocationService.isProcessingComplete(movieId);
+
+        return ResponseEntity.ok(Map.of(
+                "movieId", movieId,
+                "hasData", hasData,
+                "processingComplete", isComplete,
+                "message", isComplete ?
+                        (hasData ? "데이터가 준비되었습니다." : "데이터가 없습니다. 요청이 필요합니다.") :
+                        "데이터 처리가 진행 중입니다."
+        ));
+    }
+
+    /**
      * 영화 ID로 모든 촬영지의 지리 정보, 이미지, 주변 장소 업데이트
      */
     @GetMapping("/update-geo/movie/{movieId}")

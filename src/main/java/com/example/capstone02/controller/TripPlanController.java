@@ -100,34 +100,34 @@ public class TripPlanController {
         return ResponseEntity.ok(tripPlanDtos);
     }
 
-    /**
-     * 여행 계획 삭제 (본인 소유만 가능)
-     */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteTripPlan(@PathVariable Long id) {
-        // 현재 인증된 사용자 정보 가져오기
-        String userEmail = getCurrentUserEmail();
-
-        // 삭제하려는 계획 조회
-        Optional<TripPlan> tripPlanOpt = tripPlanService.getTripPlanById(id);
-
-        if (tripPlanOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
-
-        TripPlan tripPlan = tripPlanOpt.get();
-
-        // 사용자 소유 확인 (본인 소유가 아니면 삭제 불가)
-        if (tripPlan.getUser() != null && userEmail != null) {
-            // 사용자 이메일과 일치하지 않으면 삭제 불가
-            if (!userEmail.equals(tripPlan.getUser().getEmail())) {
-                return ResponseEntity.status(403).build(); // 접근 권한 없음
-            }
-        }
-
-        tripPlanService.deleteTripPlan(id);
-        return ResponseEntity.noContent().build();
-    }
+//    /**
+//     * 여행 계획 삭제 (본인 소유만 가능)
+//     */
+//    @DeleteMapping("/{id}")
+//    public ResponseEntity<Void> deleteTripPlan(@PathVariable Long id) {
+//        // 현재 인증된 사용자 정보 가져오기
+//        String userEmail = getCurrentUserEmail();
+//
+//        // 삭제하려는 계획 조회
+//        Optional<TripPlan> tripPlanOpt = tripPlanService.getTripPlanById(id);
+//
+//        if (tripPlanOpt.isEmpty()) {
+//            return ResponseEntity.notFound().build();
+//        }
+//
+//        TripPlan tripPlan = tripPlanOpt.get();
+//
+//        // 사용자 소유 확인 (본인 소유가 아니면 삭제 불가)
+//        if (tripPlan.getUser() != null && userEmail != null) {
+//            // 사용자 이메일과 일치하지 않으면 삭제 불가
+//            if (!userEmail.equals(tripPlan.getUser().getEmail())) {
+//                return ResponseEntity.status(403).build(); // 접근 권한 없음
+//            }
+//        }
+//
+//        tripPlanService.deleteTripPlan(id);
+//        return ResponseEntity.noContent().build();
+//    }
 
     /**
      * 현재 인증된 사용자의 이메일 가져오기

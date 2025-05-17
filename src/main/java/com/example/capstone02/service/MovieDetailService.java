@@ -6,24 +6,31 @@ import com.example.capstone02.entity.Movie;
 import com.example.capstone02.repository.MovieRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class MovieDetailService {
     private final WebClient webClient;
+    private final WebClient longTimeoutWebClient;
     private final MovieRepository movieRepository;
 
     @Value("${tmdb.api-key}")
@@ -32,6 +39,21 @@ public class MovieDetailService {
     @Value("${tmdb.base-url}")
     private String baseUrl;
 
+    // 영화 정보 처리 상태 조회를 위한 Map (메모리에 임시 저장)
+    private static final Map<Long, Boolean> processingStatusMap = new HashMap<>();
+
+    public MovieDetailService(
+            WebClient webClient,
+            @Qualifier("longTimeoutWebClient") WebClient longTimeoutWebClient,
+            MovieRepository movieRepository) {
+        this.webClient = webClient;
+        this.longTimeoutWebClient = longTimeoutWebClient;
+        this.movieRepository = movieRepository;
+    }
+
+    /**
+     * TMDB API에서 영화 정보를 가져와 저장 (기본 타임아웃 사용)
+     */
     @Transactional
     public Mono<MovieDetailDto> fetchAndSaveMovieDetail(Long movieId) {
         String url = UriComponentsBuilder.fromHttpUrl(baseUrl + "/movie/" + movieId)
@@ -44,11 +66,15 @@ public class MovieDetailService {
 
         log.info("TMDB API 요청 URL: {}", url);
 
+        // API 요청 실패 시 재시도 로직 추가
         return webClient.get()
                 .uri(url)
                 .header("accept", "application/json")
                 .retrieve()
                 .bodyToMono(MovieDetailResponseDto.class)
+                .retryWhen(Retry.backoff(3, Duration.ofSeconds(3))
+                        .maxBackoff(Duration.ofSeconds(10))
+                        .doBeforeRetry(signal -> log.warn("TMDB API 요청 재시도: {}/3", signal.totalRetries() + 1)))
                 .doOnNext(response -> log.info("TMDB API 응답: images={}, crew={}",
                         response.getImages() != null ?
                                 (response.getImages().getBackdrops() != null ? response.getImages().getBackdrops().size() : 0) : 0,
@@ -57,6 +83,124 @@ public class MovieDetailService {
                 .map(this::convertToEntity)
                 .map(movie -> movieRepository.save(movie))
                 .map(MovieDetailDto::fromEntity);
+    }
+
+    /**
+     * 영화 정보를 비동기적으로 가져와 저장 (긴 타임아웃 사용)
+     */
+    @Async("taskExecutor")
+    @Transactional
+    public CompletableFuture<MovieDetailDto> fetchAndSaveMovieDetailAsync(Long movieId) {
+        log.info("영화 ID {}에 대한 정보 비동기 요청 시작", movieId);
+
+        // 처리 상태 '처리 중'으로 설정
+        setProcessingStatus(movieId, false);
+
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String url = UriComponentsBuilder.fromHttpUrl(baseUrl + "/movie/" + movieId)
+                        .queryParam("api_key", apiKey)
+                        .queryParam("language", "ko-KR")
+                        .queryParam("append_to_response", "credits,images")
+                        .queryParam("include_image_language", "en,null,ko")
+                        .build()
+                        .toUriString();
+
+                log.info("TMDB API 비동기 요청 URL: {}", url);
+
+                // 긴 타임아웃 설정의 WebClient 사용
+                MovieDetailResponseDto response = longTimeoutWebClient.get()
+                        .uri(url)
+                        .header("accept", "application/json")
+                        .retrieve()
+                        .bodyToMono(MovieDetailResponseDto.class)
+                        .retryWhen(Retry.backoff(3, Duration.ofSeconds(5))
+                                .maxBackoff(Duration.ofMinutes(2))
+                                .doBeforeRetry(signal ->
+                                        log.warn("TMDB API 비동기 요청 재시도 {}/3: {}",
+                                                signal.totalRetries() + 1,
+                                                signal.failure().getMessage())))
+                        .block(); // 동기식 블록, 타임아웃은 WebClient 설정을 따름
+
+                log.info("TMDB API 비동기 요청 완료");
+
+                Movie movie = convertToEntity(response);
+                Movie savedMovie = movieRepository.save(movie);
+
+                // 처리 상태 '완료'로 설정
+                setProcessingStatus(movieId, true);
+
+                return MovieDetailDto.fromEntity(savedMovie);
+            } catch (Exception e) {
+                log.error("영화 ID {}에 대한 정보 비동기 처리 중 오류: {}", movieId, e.getMessage(), e);
+
+                // 오류 발생해도 처리 상태 '완료'로 설정
+                setProcessingStatus(movieId, true);
+
+                throw new RuntimeException("영화 정보 처리 실패: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    /**
+     * 영화 ID로 영화 정보 처리 상태 조회
+     */
+    public boolean isProcessingComplete(Long movieId) {
+        return processingStatusMap.getOrDefault(movieId, true); // 기본값은 완료 상태
+    }
+
+    /**
+     * 영화 ID로 영화 정보 처리 상태 설정
+     */
+    public void setProcessingStatus(Long movieId, boolean isComplete) {
+        processingStatusMap.put(movieId, isComplete);
+    }
+
+    /**
+     * 영화 ID로 영화 정보를 비동기적으로 요청하고 상태 추적
+     */
+    public Map<String, Object> requestMovieDetailAsync(Long movieId) {
+        // 이미 처리 중인 경우 중복 요청 방지
+        if (processingStatusMap.getOrDefault(movieId, true) == false) {
+            log.info("영화 ID {}에 대한 정보 처리가 이미 진행 중입니다", movieId);
+            return Map.of(
+                    "movieId", movieId,
+                    "processing", true,
+                    "message", "데이터 처리가 진행 중입니다."
+            );
+        }
+
+        // DB에 이미 존재하는지 확인
+        Optional<Movie> existingMovie = movieRepository.findById(movieId);
+        if (existingMovie.isPresent()) {
+            return Map.of(
+                    "movieId", movieId,
+                    "processing", false,
+                    "hasData", true,
+                    "message", "데이터가 이미 존재합니다."
+            );
+        }
+
+        // 처리 상태를 '처리 중'으로 설정
+        setProcessingStatus(movieId, false);
+
+        // 비동기 요청 실행
+        fetchAndSaveMovieDetailAsync(movieId)
+                .thenAccept(movieDetail -> {
+                    log.info("영화 ID {}에 대한 정보 비동기 처리 완료", movieId);
+                    setProcessingStatus(movieId, true); // 처리 완료로 상태 변경
+                })
+                .exceptionally(ex -> {
+                    log.error("영화 ID {}에 대한 정보 비동기 처리 실패: {}", movieId, ex.getMessage());
+                    setProcessingStatus(movieId, true); // 오류 발생해도 처리 완료로 표시
+                    return null;
+                });
+
+        return Map.of(
+                "movieId", movieId,
+                "processing", true,
+                "message", "데이터 요청이 시작되었습니다. 몇 분 후에 확인해주세요."
+        );
     }
 
     @Transactional(readOnly = true)

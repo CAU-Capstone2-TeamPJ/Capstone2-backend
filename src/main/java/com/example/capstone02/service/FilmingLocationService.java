@@ -9,32 +9,69 @@ import com.example.capstone02.repository.MovieRepository;
 import com.google.maps.model.LatLng;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class FilmingLocationService {
 
     private final WebClient webClient;
+    private final WebClient longTimeoutWebClient;
     private final MovieRepository movieRepository;
     private final FilmingLocationRepository filmingLocationRepository;
-    private final GoogleMapsService googleMapsService; // Google Maps 서비스 추가
+    private final GoogleMapsService googleMapsService;
 
     @Value("${python.server.url}")
     private String pythonServerUrl;
 
+    public FilmingLocationService(
+            WebClient webClient,
+            @Qualifier("longTimeoutWebClient") WebClient longTimeoutWebClient,
+            MovieRepository movieRepository,
+            FilmingLocationRepository filmingLocationRepository,
+            GoogleMapsService googleMapsService) {
+        this.webClient = webClient;
+        this.longTimeoutWebClient = longTimeoutWebClient;
+        this.movieRepository = movieRepository;
+        this.filmingLocationRepository = filmingLocationRepository;
+        this.googleMapsService = googleMapsService;
+    }
+
     /**
-     * 영화 ID로 촬영지 정보를 파이썬 서버에서 가져와 저장
+     * 영화 ID로 촬영지 정보를 파이썬 서버에서 가져와 저장 (비동기 처리 추가)
+     */
+    @Async("taskExecutor")
+    @Transactional
+    public CompletableFuture<List<FilmingLocation>> fetchAndSaveFilmingLocationsAsync(Long movieId) {
+        log.info("영화 ID {}에 대한 촬영지 정보 비동기 요청 시작", movieId);
+
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return fetchAndSaveFilmingLocations(movieId);
+            } catch (Exception e) {
+                log.error("영화 ID {}에 대한 촬영지 정보 비동기 처리 중 오류: {}", movieId, e.getMessage(), e);
+                throw new RuntimeException("촬영지 정보 처리 실패: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    /**
+     * 영화 ID로 촬영지 정보를 파이썬 서버에서 가져와 저장 (동기 처리)
      */
     @Transactional
     public List<FilmingLocation> fetchAndSaveFilmingLocations(Long movieId) {
@@ -53,13 +90,23 @@ public class FilmingLocationService {
                         movie.getReleaseDate().format(DateTimeFormatter.ISO_DATE) : null)
                 .build();
 
-        // 3. 파이썬 서버에 요청하여 촬영지 정보 가져오기
-        FilmingLocationResponseDto responseDto = webClient.post()
+        // 3. 파이썬 서버에 요청하여 촬영지 정보 가져오기 (타임아웃 증가 및 재시도 로직 추가)
+        log.info("파이썬 서버에 요청 시작: {}", pythonServerUrl);
+
+        FilmingLocationResponseDto responseDto = longTimeoutWebClient.post()
                 .uri(pythonServerUrl + "/api/filming-locations")
                 .bodyValue(requestDto)
                 .retrieve()
                 .bodyToMono(FilmingLocationResponseDto.class)
-                .block(); // 동기 처리
+                .retryWhen(Retry.backoff(3, Duration.ofSeconds(5))
+                        .maxBackoff(Duration.ofMinutes(2))
+                        .doBeforeRetry(retrySignal ->
+                                log.warn("파이썬 서버 요청 재시도 {}/3: {}",
+                                        retrySignal.totalRetries() + 1,
+                                        retrySignal.failure().getMessage())))
+                .block(); // 동기 처리, 타임아웃은 WebClient 설정에 따름
+
+        log.info("파이썬 서버 요청 완료");
 
         if (responseDto == null || responseDto.getLocations() == null || responseDto.getLocations().isEmpty()) {
             log.warn("영화 ID {}에 대한 촬영지 정보가 없습니다", movieId);
@@ -102,6 +149,7 @@ public class FilmingLocationService {
                 })
                 .collect(Collectors.toList());
 
+        log.info("영화 ID {}에 대한 촬영지 정보 저장 완료", movieId);
         return filmingLocationRepository.saveAll(filmingLocations);
     }
 
@@ -111,6 +159,52 @@ public class FilmingLocationService {
     @Transactional(readOnly = true)
     public List<FilmingLocation> getFilmingLocationsByMovieId(Long movieId) {
         return filmingLocationRepository.findByMovieId(movieId);
+    }
+
+    /**
+     * 촬영지 정보 처리 상태 조회를 위한 Map (메모리에 임시 저장)
+     * 키: 영화 ID, 값: 처리 상태 (true: 완료, false: 처리 중)
+     */
+    private static final Map<Long, Boolean> processingStatusMap = new HashMap<>();
+
+    /**
+     * 영화 ID로 촬영지 정보 처리 상태 조회
+     */
+    public boolean isProcessingComplete(Long movieId) {
+        return processingStatusMap.getOrDefault(movieId, true); // 기본값은 완료 상태
+    }
+
+    /**
+     * 영화 ID로 촬영지 정보 처리 상태 설정
+     */
+    public void setProcessingStatus(Long movieId, boolean isComplete) {
+        processingStatusMap.put(movieId, isComplete);
+    }
+
+    /**
+     * 영화 ID로 촬영지 정보를 비동기적으로 요청하고 상태 추적
+     */
+    public void requestFilmingLocationsAsync(Long movieId) {
+        // 이미 처리 중인 경우 중복 요청 방지
+        if (processingStatusMap.getOrDefault(movieId, true) == false) {
+            log.info("영화 ID {}에 대한 촬영지 정보 처리가 이미 진행 중입니다", movieId);
+            return;
+        }
+
+        // 처리 상태를 '처리 중'으로 설정
+        setProcessingStatus(movieId, false);
+
+        // 비동기 요청 실행
+        fetchAndSaveFilmingLocationsAsync(movieId)
+                .thenAccept(locations -> {
+                    log.info("영화 ID {}에 대한 촬영지 정보 비동기 처리 완료: {}개", movieId, locations.size());
+                    setProcessingStatus(movieId, true); // 처리 완료로 상태 변경
+                })
+                .exceptionally(ex -> {
+                    log.error("영화 ID {}에 대한 촬영지 정보 비동기 처리 실패: {}", movieId, ex.getMessage());
+                    setProcessingStatus(movieId, true); // 오류 발생해도 처리 완료로 표시
+                    return null;
+                });
     }
 
     /**

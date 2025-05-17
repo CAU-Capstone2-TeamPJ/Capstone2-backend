@@ -125,40 +125,40 @@ public class UserController {
         }
     }
 
-    /**
-     * 유저 프로필 업데이트
-     */
-    @PutMapping("/profile")
-    public ResponseEntity<UserResponseDto> updateProfile(@RequestBody Map<String, String> profileData) {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        if (authentication == null || !authentication.isAuthenticated() ||
-                "anonymousUser".equals(authentication.getPrincipal())) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        String email = null;
-        Object principal = authentication.getPrincipal();
-
-        if (principal instanceof UserDetails) {
-            email = ((UserDetails) principal).getUsername();
-        } else if (principal instanceof String) {
-            email = (String) principal;
-        }
-
-        if (email == null) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        String name = profileData.get("name");
-
-        if (name == null || name.trim().isEmpty()) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        User updatedUser = userService.updateUserProfile(email, name);
-        return ResponseEntity.ok(UserResponseDto.fromEntity(updatedUser));
-    }
+//    /**
+//     * 유저 프로필 업데이트
+//     */
+//    @PutMapping("/profile")
+//    public ResponseEntity<UserResponseDto> updateProfile(@RequestBody Map<String, String> profileData) {
+//        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+//
+//        if (authentication == null || !authentication.isAuthenticated() ||
+//                "anonymousUser".equals(authentication.getPrincipal())) {
+//            return ResponseEntity.badRequest().build();
+//        }
+//
+//        String email = null;
+//        Object principal = authentication.getPrincipal();
+//
+//        if (principal instanceof UserDetails) {
+//            email = ((UserDetails) principal).getUsername();
+//        } else if (principal instanceof String) {
+//            email = (String) principal;
+//        }
+//
+//        if (email == null) {
+//            return ResponseEntity.badRequest().build();
+//        }
+//
+//        String name = profileData.get("name");
+//
+//        if (name == null || name.trim().isEmpty()) {
+//            return ResponseEntity.badRequest().build();
+//        }
+//
+//        User updatedUser = userService.updateUserProfile(email, name);
+//        return ResponseEntity.ok(UserResponseDto.fromEntity(updatedUser));
+//    }
 
     /**
      * JWT 토큰 디버깅용 API
