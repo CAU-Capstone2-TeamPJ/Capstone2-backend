@@ -23,23 +23,23 @@ public class TripPlanController {
 
     private final TripPlanService tripPlanService;
 
-    /**
-     * 여행 계획 저장
-     */
-    @PostMapping
-    public ResponseEntity<TripPlanDto> saveTripPlan(@RequestBody SaveTripPlanRequestDto request) {
-        log.info("여행 계획 저장 요청: {}", request);
-
-        if (request.getTripPlanRequest() == null || request.getName() == null || request.getName().isEmpty()) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        // 현재 인증된 사용자 정보 가져오기
-        String userEmail = getCurrentUserEmail();
-
-        TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(request.getTripPlanRequest(), request.getName(), userEmail);
-        return ResponseEntity.ok(TripPlanDto.fromEntity(savedPlan));
-    }
+//    /**
+//     * 여행 계획 저장
+//     */
+//    @PostMapping
+//    public ResponseEntity<TripPlanDto> saveTripPlan(@RequestBody SaveTripPlanRequestDto request) {
+//        log.info("여행 계획 저장 요청: {}", request);
+//
+//        if (request.getTripPlanRequest() == null || request.getName() == null || request.getName().isEmpty()) {
+//            return ResponseEntity.badRequest().build();
+//        }
+//
+//        // 현재 인증된 사용자 정보 가져오기
+//        String userEmail = getCurrentUserEmail();
+//
+//        TripPlan savedPlan = tripPlanService.createAndSaveTripPlan(request.getTripPlanRequest(), request.getName(), userEmail);
+//        return ResponseEntity.ok(TripPlanDto.fromEntity(savedPlan));
+//    }
 
     /**
      * 저장된 여행 계획 조회

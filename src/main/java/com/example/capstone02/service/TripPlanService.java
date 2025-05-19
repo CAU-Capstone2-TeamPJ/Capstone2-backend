@@ -10,6 +10,7 @@ import com.example.capstone02.repository.TripPlanRepository;
 import com.example.capstone02.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -173,11 +174,81 @@ public class TripPlanService {
     }
 
     /**
-     * 여행 계획 삭제
+     * 여행 계획 삭제 (ID로 삭제)
      */
     @Transactional
     public void deleteTripPlan(Long id) {
         tripPlanRepository.deleteById(id);
+        log.info("여행 계획 ID {}가 삭제되었습니다.", id);
+    }
+
+    /**
+     * 여행 계획 삭제 (ID로 삭제, 사용자 권한 검증)
+     */
+    @Transactional
+    public void deleteTripPlan(Long id, String userEmail) {
+        TripPlan tripPlan = tripPlanRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("여행 계획을 찾을 수 없습니다: " + id));
+
+        // 사용자 권한 검증 (본인이 생성한 계획만 삭제 가능)
+        if (tripPlan.getUser() != null && userEmail != null) {
+            User user = userRepository.findByEmail(userEmail)
+                    .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + userEmail));
+
+            if (!tripPlan.getUser().getId().equals(user.getId())) {
+                throw new AccessDeniedException("이 여행 계획을 삭제할 권한이 없습니다.");
+            }
+        } else if (tripPlan.getUser() != null) {
+            // 사용자 정보가 있는 계획인데 사용자 이메일이 제공되지 않은 경우
+            throw new AccessDeniedException("권한 검증을 위한 사용자 정보가 필요합니다.");
+        }
+
+        tripPlanRepository.delete(tripPlan);
+        log.info("여행 계획 ID {}가 사용자 {}에 의해 삭제되었습니다.", id, userEmail);
+    }
+
+    /**
+     * 영화 ID로 최근 생성 일정 한 개 삭제 (사용자 이메일 검증)
+     */
+    @Transactional
+    public boolean deleteLatestTripPlanByMovieId(Long movieId, String userEmail) {
+        List<TripPlan> tripPlans = tripPlanRepository.findByMovieId(movieId);
+
+        if (tripPlans.isEmpty()) {
+            log.warn("영화 ID {}에 대한 여행 계획이 없습니다", movieId);
+            return false;
+        }
+
+        // 사용자 정보 확인
+        User user = null;
+        if (userEmail != null) {
+            user = userRepository.findByEmail(userEmail)
+                    .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + userEmail));
+        }
+
+        // 생성일 기준으로 내림차순 정렬하여 가장 최근 일정을 찾음
+        TripPlan latestPlan = tripPlans.stream()
+                .sorted((p1, p2) -> p2.getCreatedAt().compareTo(p1.getCreatedAt()))
+                .findFirst()
+                .orElse(null);
+
+        if (latestPlan == null) {
+            return false;
+        }
+
+        // 사용자 권한 검증 (본인이 생성한 일정만 삭제 가능)
+        if (latestPlan.getUser() != null && user != null) {
+            if (!latestPlan.getUser().getId().equals(user.getId())) {
+                log.warn("사용자 {}가 다른 사용자의 여행 계획을 삭제하려고 시도했습니다", userEmail);
+                throw new AccessDeniedException("이 여행 계획을 삭제할 권한이 없습니다.");
+            }
+        }
+
+        // 일정 삭제
+        tripPlanRepository.delete(latestPlan);
+        log.info("영화 ID {}의 최근 여행 계획(ID: {})이 삭제되었습니다", movieId, latestPlan.getId());
+
+        return true;
     }
 
     /**
