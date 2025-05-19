@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 public class WebClientConfig {
 
     // 파이썬 서버 요청 타임아웃 설정 (15분)
-    private static final int TIMEOUT_PYTHON_SERVER = 900; // 초 단위 (15분)
+    private static final int TIMEOUT_PYTHON_SERVER = 1800; // 초 단위 (30분)
 
     // 일반 API 요청 타임아웃 설정 (60초)
     private static final int TIMEOUT_DEFAULT = 60; // 초 단위
