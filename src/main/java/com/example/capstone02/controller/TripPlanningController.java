@@ -43,6 +43,11 @@ public class TripPlanningController {
             return ResponseEntity.badRequest().build();
         }
 
+        // 하루 여행 시간 기본값 설정 (4시간)
+        if (request.getTravelHours() == null) {
+            request.setTravelHours(4);
+        }
+
         // 여행 계획 생성
         TripPlanResponseDto tripPlan = tripPlanningService.createTripPlan(request);
 

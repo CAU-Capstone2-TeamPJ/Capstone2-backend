@@ -67,11 +67,15 @@ public class GoogleMapsDistanceService {
                 if (element.status == DistanceMatrixElementStatus.OK) {
                     int distance = (int) element.distance.inMeters;
                     int duration = (int) element.duration.inSeconds;
+
+                    log.debug("API 거리 계산 결과: origin=({}, {}), dest=({}, {}), 거리={}m, 시간={}초",
+                            originLat, originLng, destLat, destLng, distance, duration);
+
                     return new int[] { distance, duration };
                 }
             }
 
-            log.warn("거리 계산 결과가 없습니다: origin=({}, {}), dest=({}, {})",
+            log.warn("API 거리 계산 결과가 없습니다: origin=({}, {}), dest=({}, {})",
                     originLat, originLng, destLat, destLng);
 
             // API 결과가 없을 경우 직선 거리로 계산한 결과를 사용
@@ -111,7 +115,8 @@ public class GoogleMapsDistanceService {
         double timeHours = distanceKm / 60.0;
         int timeSeconds = (int) (timeHours * 3600); // 초 단위 변환
 
-        log.info("직선 거리 계산 결과: 거리={}m, 시간={}초", distanceMeters, timeSeconds);
+        log.debug("직선 거리 계산 결과: lat1={}, lon1={}, lat2={}, lon2={}, 거리={}m, 시간={}초",
+                lat1, lon1, lat2, lon2, distanceMeters, timeSeconds);
 
         return new int[] { distanceMeters, timeSeconds };
     }
@@ -149,5 +154,96 @@ public class GoogleMapsDistanceService {
             log.error("거리 행렬 계산 API 에러: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 거리 행렬 배치 계산 (API 비용 절감 및 성능 향상용)
+     * @param locations 위도/경도 좌표 목록 (0번은 출발지)
+     * @return 거리 행렬 (locations.size() x locations.size() 크기)
+     */
+    public int[][] calculateDistanceMatrixBatch(List<LatLng> locations) {
+        int size = locations.size();
+        int[][] distanceMatrix = new int[size][size];
+
+        try {
+            log.info("거리 행렬 배치 계산 시작: {}개 장소", size);
+
+            // 좌표 문자열 목록 생성
+            List<String> locationStrings = new ArrayList<>();
+            for (LatLng location : locations) {
+                locationStrings.add(location.lat + "," + location.lng);
+            }
+
+            // 구글 API 호출
+            DistanceMatrixResponseDto response = calculateDistanceMatrix(locationStrings, locationStrings);
+
+            if (response != null && "OK".equals(response.getStatus())) {
+                // 응답 결과로 거리 행렬 구성
+                for (int i = 0; i < size; i++) {
+                    for (int j = 0; j < size; j++) {
+                        if (i == j) {
+                            distanceMatrix[i][j] = 0; // 동일 위치는 거리 0
+                            continue;
+                        }
+
+                        try {
+                            DistanceMatrixResponseDto.Element element = response.getRows().get(i).getElements().get(j);
+                            if ("OK".equals(element.getStatus())) {
+                                // 시간 (초) 저장
+                                distanceMatrix[i][j] = element.getDuration().getValue();
+                            } else {
+                                // API 실패 시 직선 거리 계산
+                                LatLng origin = locations.get(i);
+                                LatLng dest = locations.get(j);
+                                int[] result = calculateHaversineDistance(origin.lat, origin.lng, dest.lat, dest.lng);
+                                distanceMatrix[i][j] = result[1]; // 시간 (초)
+                            }
+                        } catch (Exception e) {
+                            // 예외 발생 시 직선 거리 계산
+                            LatLng origin = locations.get(i);
+                            LatLng dest = locations.get(j);
+                            int[] result = calculateHaversineDistance(origin.lat, origin.lng, dest.lat, dest.lng);
+                            distanceMatrix[i][j] = result[1]; // 시간 (초)
+                        }
+                    }
+                }
+
+                log.info("거리 행렬 배치 계산 완료: {}x{} 크기", size, size);
+            } else {
+                log.error("거리 행렬 API 응답 오류: {}", response != null ? response.getStatus() : "null response");
+                // API 호출 실패 시 모든 장소 쌍에 대해 직선 거리 계산
+                for (int i = 0; i < size; i++) {
+                    for (int j = 0; j < size; j++) {
+                        if (i == j) {
+                            distanceMatrix[i][j] = 0;
+                            continue;
+                        }
+
+                        LatLng origin = locations.get(i);
+                        LatLng dest = locations.get(j);
+                        int[] result = calculateHaversineDistance(origin.lat, origin.lng, dest.lat, dest.lng);
+                        distanceMatrix[i][j] = result[1]; // 시간 (초)
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("거리 행렬 계산 중 예외 발생: {}", e.getMessage());
+            // 예외 발생 시 모든 장소 쌍에 대해 직선 거리 계산
+            for (int i = 0; i < size; i++) {
+                for (int j = 0; j < size; j++) {
+                    if (i == j) {
+                        distanceMatrix[i][j] = 0;
+                        continue;
+                    }
+
+                    LatLng origin = locations.get(i);
+                    LatLng dest = locations.get(j);
+                    int[] result = calculateHaversineDistance(origin.lat, origin.lng, dest.lat, dest.lng);
+                    distanceMatrix[i][j] = result[1]; // 시간 (초)
+                }
+            }
+        }
+
+        return distanceMatrix;
     }
 }

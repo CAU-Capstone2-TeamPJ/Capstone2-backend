@@ -24,8 +24,7 @@ public class TripPlanningService {
     private static final int SECONDS_PER_MINUTE = 60;
     private static final int MINUTES_PER_HOUR = 60;
     private static final int MAX_ITERATIONS = 100; // K-means 최대 반복 횟수
-    private static final int MAX_DAILY_TRAVEL_TIME_MINUTES = 180; // 하루 최대 이동 시간 3시간
-    private static final int MAX_LOCATION_DISTANCE_KM = 100; // 클러스터 내 최대 거리 100km
+    private static final String NIGHT_VIEW_KEYWORD = "야경"; // 야경 키워드
 
     /**
      * 여행 경로 계획 생성
@@ -38,12 +37,7 @@ public class TripPlanningService {
 
         if (allLocations.isEmpty()) {
             log.warn("영화 ID {}의 촬영지 정보가 없습니다", request.getMovieId());
-            return TripPlanResponseDto.builder()
-                    .dailyRoutes(Collections.emptyList())
-                    .totalDays(0)
-                    .totalLocations(0)
-                    .totalTravelTimeMinutes(0)
-                    .build();
+            return createEmptyResponse();
         }
 
         // 2. 국가 필터링
@@ -54,6 +48,97 @@ public class TripPlanningService {
         }
 
         // 3. 컨셉 필터링
+        List<String> allConceptKeywords = getConceptKeywords(request);
+        if (!allConceptKeywords.isEmpty()) {
+            allLocations = filterLocationsByKeywords(allLocations, allConceptKeywords);
+        }
+
+        if (allLocations.isEmpty()) {
+            log.warn("필터링 후 조건에 맞는 촬영지가 없습니다");
+            return createEmptyResponse();
+        }
+
+        log.info("필터링 후 촬영지 수: {}", allLocations.size());
+
+        // 위도/경도 정보 없는 장소 필터링
+        allLocations = allLocations.stream()
+                .filter(location -> location.getLatitude() != null && location.getLongitude() != null)
+                .collect(Collectors.toList());
+
+        // 4. 장소 간 이동 시간 계산 및 거리 행렬 생성
+        List<LocationDistanceInfo> distanceMatrix = calculateDistanceMatrix(allLocations, request.getOriginLat(), request.getOriginLng());
+
+        // 이동 시간 거리 행렬 로깅
+        logDistanceMatrix(distanceMatrix);
+
+        // 5. K-means++ 클러스터링 수행
+        int travelMinutesPerDay = (request.getTravelHours() != null ? request.getTravelHours() : 8) * MINUTES_PER_HOUR;
+        int totalTravelTime = calculateTotalTravelTime(allLocations, distanceMatrix);
+        int k = Math.max(1, (int) Math.ceil((double) totalTravelTime / travelMinutesPerDay));
+
+        log.info("클러스터링 설정 - 총 이동 시간: {}분, 하루 여행 시간: {}분, 필요한 일수(k): {}",
+                totalTravelTime, travelMinutesPerDay, k);
+
+        Map<Integer, List<FilmingLocation>> clusters = performKMeansPlusPlus(
+                allLocations, k, distanceMatrix, request.getOriginLat(), request.getOriginLng());
+
+        // 6. 각 클러스터 내에서 야경 키워드 있는 장소를 마지막으로 설정하여 경로 계산
+        List<TripPlanResponseDto.DailyRouteDto> dailyRoutes = new ArrayList<>();
+        int totalLocations = 0;
+        int totalTravelTimeMinutes = 0;
+
+        for (int clusterId = 0; clusterId < clusters.size(); clusterId++) {
+            List<FilmingLocation> clusterLocations = clusters.get(clusterId);
+            if (clusterLocations.isEmpty()) continue;
+
+            totalLocations += clusterLocations.size();
+
+            // 야경 키워드가 있는 장소 찾기
+            Optional<FilmingLocation> nightViewLocation = findLocationWithKeyword(clusterLocations, NIGHT_VIEW_KEYWORD);
+
+            // 클러스터 내 최적 경로 계산 (야경 장소가 있으면 마지막으로 고정)
+            List<FilmingLocation> optimalRoute = calculateOptimalRouteWithConstraint(
+                    clusterLocations, distanceMatrix,
+                    request.getOriginLat(), request.getOriginLng(),
+                    nightViewLocation.orElse(null), clusterId == 0);
+
+            // 경로 변환하여 DailyRouteDto 생성
+            TripPlanResponseDto.DailyRouteDto dailyRoute = createDailyRouteFromLocations(
+                    optimalRoute, distanceMatrix, clusterId + 1);
+
+            dailyRoutes.add(dailyRoute);
+            totalTravelTimeMinutes += dailyRoute.getTravelTimeMinutes();
+        }
+
+        // 7. 클러스터 간 방문 순서 최적화 (출발지에서 각 클러스터 첫 장소까지의 거리 기준)
+        List<TripPlanResponseDto.DailyRouteDto> optimizedRoutes = optimizeClusterOrder(
+                dailyRoutes, allLocations, distanceMatrix, request.getOriginLat(), request.getOriginLng());
+
+        // 8. 최종 여행 계획 구성
+        return TripPlanResponseDto.builder()
+                .dailyRoutes(optimizedRoutes)
+                .totalDays(optimizedRoutes.size())
+                .totalLocations(totalLocations)
+                .totalTravelTimeMinutes(totalTravelTimeMinutes)
+                .build();
+    }
+
+    /**
+     * 빈 응답 생성
+     */
+    private TripPlanResponseDto createEmptyResponse() {
+        return TripPlanResponseDto.builder()
+                .dailyRoutes(Collections.emptyList())
+                .totalDays(0)
+                .totalLocations(0)
+                .totalTravelTimeMinutes(0)
+                .build();
+    }
+
+    /**
+     * 컨셉 키워드 목록 가져오기
+     */
+    private List<String> getConceptKeywords(TripPlanRequestDto request) {
         List<String> allConceptKeywords = new ArrayList<>();
 
         // 이전 버전과의 호환성 유지 - 단일 컨셉
@@ -70,246 +155,29 @@ public class TripPlanningService {
             }
         }
 
-        // 컨셉 키워드가 있는 경우에만 필터링 적용
-        if (!allConceptKeywords.isEmpty()) {
-            // 각 촬영지의 추천 키워드와 컨셉 키워드가 하나라도 일치하는 장소만 필터링
-            allLocations = allLocations.stream()
-                    .filter(location -> {
-                        List<String> locationKeywords = location.getRecommendationKeywords();
-                        return locationKeywords.stream().anyMatch(allConceptKeywords::contains);
-                    })
-                    .collect(Collectors.toList());
-        }
-
-        if (allLocations.isEmpty()) {
-            log.warn("필터링 후 조건에 맞는 촬영지가 없습니다");
-            return TripPlanResponseDto.builder()
-                    .dailyRoutes(Collections.emptyList())
-                    .totalDays(0)
-                    .totalLocations(0)
-                    .totalTravelTimeMinutes(0)
-                    .build();
-        }
-
-        log.info("필터링 후 촬영지 수: {}", allLocations.size());
-
-        // 위도/경도 정보 없는 장소 필터링
-        allLocations = allLocations.stream()
-                .filter(location -> location.getLatitude() != null && location.getLongitude() != null)
-                .collect(Collectors.toList());
-
-        // 4. 지역별 그룹화 (개선점: 장소를 먼저 지역별로 그룹화)
-        Map<String, List<FilmingLocation>> regionGroups = groupLocationsByRegion(allLocations);
-
-        // 5. 장소 간 거리 및 시간 계산
-        List<LocationDistanceInfo> distanceInfoList = calculateAllDistances(allLocations, request.getOriginLat(), request.getOriginLng());
-
-        // 6. 지역별 여행 계획 생성
-        List<TripPlanResponseDto.DailyRouteDto> allDailyRoutes = new ArrayList<>();
-        int dayCounter = 1;
-        int totalLocations = 0;
-        int totalTravelTimeMinutes = 0;
-
-        // 지역 그룹 우선순위 결정 (출발지에서 가장 가까운 지역부터)
-        List<String> regionPriority = determineRegionPriority(regionGroups, distanceInfoList, request.getOriginLat(), request.getOriginLng());
-
-        for (String region : regionPriority) {
-            List<FilmingLocation> regionLocations = regionGroups.get(region);
-
-            if (regionLocations.isEmpty()) {
-                continue;
-            }
-
-            totalLocations += regionLocations.size();
-
-            // 지역 내 이동 시간 계산
-            int regionTravelTime = calculateTotalTravelTime(regionLocations, distanceInfoList);
-            int travelHoursPerDay = request.getTravelHours() != null ? request.getTravelHours() : 8; // 기본값 8시간
-            int travelMinutesPerDay = travelHoursPerDay * MINUTES_PER_HOUR;
-
-            // 필요한 일수(클러스터 수) 계산
-            int requiredDays = (int) Math.ceil((double) regionTravelTime / travelMinutesPerDay);
-            if (requiredDays < 1) requiredDays = 1;
-
-            // 지역 내 클러스터링 수행
-            Map<Integer, List<FilmingLocation>> clusters = performKMeansClustering(
-                    regionLocations, requiredDays, distanceInfoList, request.getOriginLat(), request.getOriginLng());
-
-            // 지역 내 최적 경로 계산
-            List<TripPlanResponseDto.DailyRouteDto> regionRoutes = calculateOptimalRoutes(
-                    clusters, distanceInfoList, request.getOriginLat(), request.getOriginLng());
-
-            // 일차 번호 조정
-            for (TripPlanResponseDto.DailyRouteDto route : regionRoutes) {
-                route.setDay(dayCounter++);
-                totalTravelTimeMinutes += route.getTravelTimeMinutes();
-                allDailyRoutes.add(route);
-            }
-        }
-
-        // 7. 최종 여행 계획 구성
-        TripPlanResponseDto tripPlan = TripPlanResponseDto.builder()
-                .dailyRoutes(allDailyRoutes)
-                .totalDays(allDailyRoutes.size())
-                .totalLocations(totalLocations)
-                .totalTravelTimeMinutes(totalTravelTimeMinutes)
-                .build();
-
-        log.info("여행 경로 계획 생성 완료: 총 {}일, {}개 장소, 총 이동시간 {}분",
-                tripPlan.getTotalDays(), tripPlan.getTotalLocations(), tripPlan.getTotalTravelTimeMinutes());
-
-        return tripPlan;
+        return allConceptKeywords;
     }
 
     /**
-     * 장소를 지역별로 그룹화
-     * (개선점: 행정구역 또는 위치 클러스터링 기준으로 지역 그룹화)
+     * 키워드로 장소 필터링
      */
-    private Map<String, List<FilmingLocation>> groupLocationsByRegion(List<FilmingLocation> locations) {
-        Map<String, List<FilmingLocation>> regionGroups = new HashMap<>();
-
-        // 1차 그룹화: 행정구역(시/도)별 그룹화
-        Map<String, List<FilmingLocation>> adminGroups = locations.stream()
-                .filter(location -> location.getCity() != null && !location.getCity().isEmpty())
-                .collect(Collectors.groupingBy(FilmingLocation::getCity));
-
-        // 행정구역 정보가 없는 장소들은 위도/경도 기반으로 그룹화
-        List<FilmingLocation> noAdminLocations = locations.stream()
-                .filter(location -> location.getCity() == null || location.getCity().isEmpty())
-                .collect(Collectors.toList());
-
-        // 기존 그룹 추가
-        regionGroups.putAll(adminGroups);
-
-        // 위치 기반 클러스터링으로 행정구역이 없는 장소들 그룹화
-        if (!noAdminLocations.isEmpty()) {
-            Map<String, List<FilmingLocation>> coordinateGroups = groupLocationsByCoordinates(noAdminLocations);
-            regionGroups.putAll(coordinateGroups);
-        }
-
-        log.info("장소 지역별 그룹화 완료: {}개 지역", regionGroups.size());
-        return regionGroups;
-    }
-
-    /**
-     * 위도/경도 기반으로 장소 그룹화
-     * (같은 지역에 속하는 장소들의 대략적인 거리 기준으로 그룹화)
-     */
-    private Map<String, List<FilmingLocation>> groupLocationsByCoordinates(List<FilmingLocation> locations) {
-        Map<String, List<FilmingLocation>> coordinateGroups = new HashMap<>();
-        Set<FilmingLocation> assignedLocations = new HashSet<>();
-        int groupCounter = 0;
-
-        for (FilmingLocation location : locations) {
-            if (assignedLocations.contains(location)) {
-                continue;
-            }
-
-            List<FilmingLocation> group = new ArrayList<>();
-            group.add(location);
-            assignedLocations.add(location);
-
-            // 이 장소와 가까운 모든 장소 찾기
-            for (FilmingLocation other : locations) {
-                if (assignedLocations.contains(other) || location.equals(other)) {
-                    continue;
-                }
-
-                // 두 장소 간 대략적인 거리 계산 (하버사인 공식)
-                double distance = calculateHaversineDistance(
-                        location.getLatitude(), location.getLongitude(),
-                        other.getLatitude(), other.getLongitude());
-
-                // 최대 거리 이내인 경우 같은 그룹으로
-                if (distance <= MAX_LOCATION_DISTANCE_KM) {
-                    group.add(other);
-                    assignedLocations.add(other);
-                }
-            }
-
-            coordinateGroups.put("지역_" + groupCounter++, group);
-        }
-
-        return coordinateGroups;
-    }
-
-    /**
-     * 하버사인 공식으로 두 좌표 간 거리 계산 (km 단위)
-     */
-    private double calculateHaversineDistance(double lat1, double lon1, double lat2, double lon2) {
-        final int R = 6371; // 지구 반경 (km)
-
-        double latDistance = Math.toRadians(lat2 - lat1);
-        double lonDistance = Math.toRadians(lon2 - lon1);
-
-        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
-
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-        return R * c;
-    }
-
-    /**
-     * 지역 방문 순서 결정 (출발지에서 가장 가까운 지역부터)
-     */
-    private List<String> determineRegionPriority(
-            Map<String, List<FilmingLocation>> regionGroups,
-            List<LocationDistanceInfo> distanceInfoList,
-            Double originLat, Double originLng) {
-
-        if (originLat == null || originLng == null) {
-            // 출발지 정보가 없으면 그냥 기본 순서 반환
-            return new ArrayList<>(regionGroups.keySet());
-        }
-
-        // 각 지역의 대표 장소 (중심)와 출발지 사이의 거리 계산
-        Map<String, Integer> regionDistancesToOrigin = new HashMap<>();
-
-        for (Map.Entry<String, List<FilmingLocation>> entry : regionGroups.entrySet()) {
-            String region = entry.getKey();
-            List<FilmingLocation> locations = entry.getValue();
-
-            if (locations.isEmpty()) {
-                continue;
-            }
-
-            // 지역 내 출발지와 가장 가까운 장소 찾기
-            FilmingLocation closestLocation = locations.stream()
-                    .min(Comparator.comparingInt(loc ->
-                            distanceInfoList.stream()
-                                    .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(loc.getId()))
-                                    .findFirst()
-                                    .map(LocationDistanceInfo::getTravelTimeMinutes)
-                                    .orElse(Integer.MAX_VALUE)))
-                    .orElse(locations.get(0));
-
-            // 출발지와의 거리 저장
-            int distanceToOrigin = distanceInfoList.stream()
-                    .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(closestLocation.getId()))
-                    .findFirst()
-                    .map(LocationDistanceInfo::getTravelTimeMinutes)
-                    .orElse(Integer.MAX_VALUE);
-
-            regionDistancesToOrigin.put(region, distanceToOrigin);
-        }
-
-        // 출발지와 가까운 순서로 지역 정렬
-        return regionDistancesToOrigin.entrySet().stream()
-                .sorted(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey)
+    private List<FilmingLocation> filterLocationsByKeywords(List<FilmingLocation> locations, List<String> keywords) {
+        return locations.stream()
+                .filter(location -> {
+                    List<String> locationKeywords = location.getRecommendationKeywords();
+                    return locationKeywords.stream().anyMatch(keywords::contains);
+                })
                 .collect(Collectors.toList());
     }
 
     /**
-     * 모든 장소 간 거리 및 시간 계산
+     * 장소 간 이동 시간 거리 행렬 계산
      */
-    private List<LocationDistanceInfo> calculateAllDistances(List<FilmingLocation> locations, Double originLat, Double originLng) {
-        List<LocationDistanceInfo> distanceInfoList = new ArrayList<>();
+    private List<LocationDistanceInfo> calculateDistanceMatrix(List<FilmingLocation> locations, Double originLat, Double originLng) {
+        List<LocationDistanceInfo> distanceMatrix = new ArrayList<>();
         int locationCount = locations.size();
 
-        log.info("장소 간 거리 계산 시작: {}개 장소, 총 {}개 조합", locationCount, locationCount * (locationCount - 1));
+        log.info("장소 간 거리 행렬 계산 시작: {}개 장소", locationCount);
 
         // 출발지와 각 장소 사이의 거리 계산 (최초 클러스터 선택용)
         if (originLat != null && originLng != null) {
@@ -327,78 +195,95 @@ public class TripPlanningService {
                         .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
                         .build();
 
-                distanceInfoList.add(info);
+                distanceMatrix.add(info);
             }
         }
 
-        // 모든 장소 간 거리 계산 (n^2 복잡도)
+        // 장소 간 이동 시간 계산 (a->b와 b->a 중 하나만 계산)
         for (int i = 0; i < locationCount; i++) {
-            for (int j = 0; j < locationCount; j++) {
-                if (i != j) { // 같은 장소는 계산 제외
-                    FilmingLocation fromLocation = locations.get(i);
-                    FilmingLocation toLocation = locations.get(j);
+            for (int j = i + 1; j < locationCount; j++) {
+                FilmingLocation fromLocation = locations.get(i);
+                FilmingLocation toLocation = locations.get(j);
 
-                    // 개선점: 장거리 이동에 대한 현실성 검증
-                    double haversineDistance = calculateHaversineDistance(
-                            fromLocation.getLatitude(), fromLocation.getLongitude(),
-                            toLocation.getLatitude(), toLocation.getLongitude());
+                int[] result = distanceService.calculateDistance(
+                        fromLocation.getLatitude(), fromLocation.getLongitude(),
+                        toLocation.getLatitude(), toLocation.getLongitude());
 
-                    int[] result;
+                // a->b 방향 저장
+                LocationDistanceInfo forwardInfo = LocationDistanceInfo.builder()
+                        .fromLocationId(fromLocation.getId())
+                        .toLocationId(toLocation.getId())
+                        .fromLocationName(fromLocation.getName())
+                        .toLocationName(toLocation.getName())
+                        .distanceMeters(result[0])
+                        .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
+                        .build();
 
-                    // 매우 먼 거리인 경우 (예: 서울-부산) 페널티 적용
-                    if (haversineDistance > MAX_LOCATION_DISTANCE_KM) {
-                        // 기존 거리 계산 결과에 3배 페널티 적용
-                        result = distanceService.calculateDistance(
-                                fromLocation.getLatitude(), fromLocation.getLongitude(),
-                                toLocation.getLatitude(), toLocation.getLongitude());
+                distanceMatrix.add(forwardInfo);
 
-                        // 페널티: 먼 거리는 실제보다 더 멀게 처리하여 클러스터링시 분리되도록
-                        result[0] = (int)(result[0] * 3); // 거리 3배
-                        result[1] = (int)(result[1] * 3); // 시간 3배
+                // b->a 방향은 동일한 값으로 저장 (대칭성)
+                LocationDistanceInfo backwardInfo = LocationDistanceInfo.builder()
+                        .fromLocationId(toLocation.getId())
+                        .toLocationId(fromLocation.getId())
+                        .fromLocationName(toLocation.getName())
+                        .toLocationName(fromLocation.getName())
+                        .distanceMeters(result[0])
+                        .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
+                        .build();
 
-                        log.debug("장거리 이동 페널티 적용: {} -> {}, {}km",
-                                fromLocation.getName(), toLocation.getName(), (int)haversineDistance);
-                    } else {
-                        result = distanceService.calculateDistance(
-                                fromLocation.getLatitude(), fromLocation.getLongitude(),
-                                toLocation.getLatitude(), toLocation.getLongitude());
-                    }
-
-                    LocationDistanceInfo info = LocationDistanceInfo.builder()
-                            .fromLocationId(fromLocation.getId())
-                            .toLocationId(toLocation.getId())
-                            .fromLocationName(fromLocation.getName())
-                            .toLocationName(toLocation.getName())
-                            .distanceMeters(result[0])
-                            .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
-                            .build();
-
-                    distanceInfoList.add(info);
-                }
+                distanceMatrix.add(backwardInfo);
             }
         }
 
-        log.info("장소 간 거리 계산 완료: {}개 계산됨", distanceInfoList.size());
-        return distanceInfoList;
+        log.info("장소 간 거리 행렬 계산 완료: {}개 계산됨", distanceMatrix.size());
+        return distanceMatrix;
     }
 
     /**
-     * 장소들을 한 번씩 방문하는데 필요한 총 이동 시간 계산
+     * 거리 행렬 로깅
      */
-    private int calculateTotalTravelTime(List<FilmingLocation> locations, List<LocationDistanceInfo> distanceInfoList) {
+    private void logDistanceMatrix(List<LocationDistanceInfo> distanceMatrix) {
+        log.info("===== 이동 시간 거리 행렬 =====");
+        Map<Long, Map<Long, Integer>> distanceMap = new HashMap<>();
+
+        // 맵 형태로 변환
+        for (LocationDistanceInfo info : distanceMatrix) {
+            if (info.getFromLocationId() == 0) continue; // 출발지는 제외
+
+            distanceMap.computeIfAbsent(info.getFromLocationId(), k -> new HashMap<>())
+                    .put(info.getToLocationId(), info.getTravelTimeMinutes());
+        }
+
+        // 로그 출력
+        for (Map.Entry<Long, Map<Long, Integer>> fromEntry : distanceMap.entrySet()) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("From ID ").append(fromEntry.getKey()).append(": ");
+
+            for (Map.Entry<Long, Integer> toEntry : fromEntry.getValue().entrySet()) {
+                sb.append("[To ID ").append(toEntry.getKey())
+                        .append("=").append(toEntry.getValue()).append("분] ");
+            }
+
+            log.info(sb.toString());
+        }
+        log.info("==========================");
+    }
+
+    /**
+     * 총 이동 시간 계산
+     */
+    private int calculateTotalTravelTime(List<FilmingLocation> locations, List<LocationDistanceInfo> distanceMatrix) {
         if (locations.size() <= 1) {
             return 0;
         }
 
         // 최소 신장 트리(MST)를 이용해 대략적인 이동 시간 추정
-        // 실제로는 TSP 문제이지만, 간소화를 위해 MST * 1.5 정도로 추정
         Map<Long, Map<Long, Integer>> graph = new HashMap<>();
 
         // 그래프 구성
-        for (LocationDistanceInfo info : distanceInfoList) {
+        for (LocationDistanceInfo info : distanceMatrix) {
             if (info.getFromLocationId() == 0) continue; // 출발지는 제외
 
-            // 클러스터링에 사용할 때는 해당 지역 내 장소들에 대해서만 계산
             if (!containsLocation(locations, info.getFromLocationId()) ||
                     !containsLocation(locations, info.getToLocationId())) {
                 continue;
@@ -458,13 +343,13 @@ public class TripPlanningService {
     }
 
     /**
-     * K-means 클러스터링 수행
+     * K-means++ 클러스터링 수행
      */
-    private Map<Integer, List<FilmingLocation>> performKMeansClustering(
-            List<FilmingLocation> locations, int k, List<LocationDistanceInfo> distanceInfoList,
+    private Map<Integer, List<FilmingLocation>> performKMeansPlusPlus(
+            List<FilmingLocation> locations, int k, List<LocationDistanceInfo> distanceMatrix,
             Double originLat, Double originLng) {
 
-        log.info("K-means 클러스터링 시작: {}개 장소, {}개 클러스터", locations.size(), k);
+        log.info("K-means++ 클러스터링 시작: {}개 장소, {}개 클러스터", locations.size(), k);
 
         int n = locations.size();
         if (n <= k) {
@@ -476,8 +361,8 @@ public class TripPlanningService {
             return clusters;
         }
 
-        // 1. 클러스터 중심 초기화 (여기서는 실제 장소를 중심으로 사용)
-        List<FilmingLocation> centers = initializeClusterCenters(locations, k, distanceInfoList, originLat, originLng);
+        // 1. K-means++ 방식으로 클러스터 중심 초기화
+        List<FilmingLocation> centers = initializeClusterCenters(locations, k, distanceMatrix, originLat, originLng);
 
         // 2. 각 장소의 클러스터 할당
         Map<Integer, List<FilmingLocation>> clusters = new HashMap<>();
@@ -492,15 +377,15 @@ public class TripPlanningService {
 
             // 각 장소를 가장 가까운 중심점에 할당
             for (FilmingLocation location : locations) {
-                int nearestCenterId = findNearestCenterId(location, centers, distanceInfoList);
+                int nearestCenterId = findNearestCenterId(location, centers, distanceMatrix);
                 clusters.get(nearestCenterId).add(location);
             }
 
             // 빈 클러스터 처리
-            handleEmptyClusters(clusters, locations, centers, distanceInfoList);
+            handleEmptyClusters(clusters, locations, centers, distanceMatrix);
 
             // 새 중심점 계산
-            List<FilmingLocation> newCenters = calculateNewCenters(clusters, distanceInfoList);
+            List<FilmingLocation> newCenters = calculateNewCenters(clusters, distanceMatrix);
 
             // 수렴 체크 (중심점이 더 이상 변경되지 않으면)
             boolean centersChanged = !areCentersEqual(centers, newCenters);
@@ -513,30 +398,38 @@ public class TripPlanningService {
             iteration++;
         }
 
-        log.info("K-means 클러스터링 완료: {}회 반복, {}개 클러스터", iteration, clusters.size());
+        log.info("K-means++ 클러스터링 완료: {}회 반복, {}개 클러스터", iteration, clusters.size());
 
-        // 3. 출발지와 가장 가까운 클러스터를 0번 클러스터로 조정
+        // 클러스터 결과 로깅
+        for (int i = 0; i < clusters.size(); i++) {
+            List<FilmingLocation> clusterLocations = clusters.get(i);
+            log.info("클러스터 {}: {}개 장소 - {}", i, clusterLocations.size(),
+                    clusterLocations.stream().map(FilmingLocation::getName).collect(Collectors.joining(", ")));
+        }
+
+        // 출발지와 가장 가까운 클러스터를 0번 클러스터로 조정
         if (originLat != null && originLng != null) {
-            adjustClusterOrderByOrigin(clusters, distanceInfoList, originLat, originLng);
+            adjustClusterOrderByOrigin(clusters, distanceMatrix, originLat, originLng);
         }
 
         return clusters;
     }
 
     /**
-     * 클러스터 중심 초기화 (출발지와 가까운 장소부터 시작)
+     * K-means++ 방식으로 클러스터 중심 초기화
      */
     private List<FilmingLocation> initializeClusterCenters(
-            List<FilmingLocation> locations, int k, List<LocationDistanceInfo> distanceInfoList,
+            List<FilmingLocation> locations, int k, List<LocationDistanceInfo> distanceMatrix,
             Double originLat, Double originLng) {
 
         List<FilmingLocation> centers = new ArrayList<>();
+        Random random = new Random();
 
         if (originLat != null && originLng != null) {
             // 출발지와 가장 가까운 장소를 첫번째 중심으로 선택
             FilmingLocation firstCenter = locations.stream()
                     .min(Comparator.comparingInt(loc ->
-                            distanceInfoList.stream()
+                            distanceMatrix.stream()
                                     .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(loc.getId()))
                                     .findFirst()
                                     .map(LocationDistanceInfo::getTravelTimeMinutes)
@@ -545,25 +438,51 @@ public class TripPlanningService {
 
             centers.add(firstCenter);
         } else {
-            // 출발지 정보가 없으면 임의로 첫번째 장소 선택
-            centers.add(locations.get(0));
+            // 출발지 정보가 없으면 랜덤으로 첫번째 장소 선택
+            centers.add(locations.get(random.nextInt(locations.size())));
         }
 
-        // 나머지 중심점은 기존 중심점과 가장 멀리 떨어진 장소들로 선택 (K-means++ 방식)
+        // K-means++ 방식으로 나머지 중심점 선택
         while (centers.size() < k) {
-            FilmingLocation nextCenter = locations.stream()
-                    .filter(loc -> !centers.contains(loc))
-                    .max(Comparator.comparingInt(loc ->
-                            minDistanceToAnyCenter(loc, centers, distanceInfoList)))
-                    .orElse(null);
+            // 각 장소에 대해 가장 가까운 중심점까지의 거리 계산
+            Map<FilmingLocation, Double> distancesToNearest = new HashMap<>();
+            double totalDistance = 0;
+
+            for (FilmingLocation loc : locations) {
+                if (centers.contains(loc)) continue;
+
+                int minDistance = minDistanceToAnyCenter(loc, centers, distanceMatrix);
+                distancesToNearest.put(loc, (double) minDistance);
+                totalDistance += minDistance;
+            }
+
+            if (totalDistance == 0) break;
+
+            // 확률적으로 다음 중심점 선택 (거리가 멀수록 높은 확률)
+            double rand = random.nextDouble() * totalDistance;
+            double cumulativeProb = 0;
+            FilmingLocation nextCenter = null;
+
+            for (Map.Entry<FilmingLocation, Double> entry : distancesToNearest.entrySet()) {
+                cumulativeProb += entry.getValue();
+                if (cumulativeProb >= rand) {
+                    nextCenter = entry.getKey();
+                    break;
+                }
+            }
 
             if (nextCenter != null) {
                 centers.add(nextCenter);
+            } else if (!distancesToNearest.isEmpty()) {
+                // 랜덤 선택이 실패한 경우, 가장 먼 장소 선택
+                nextCenter = Collections.max(distancesToNearest.entrySet(), Map.Entry.comparingByValue()).getKey();
+                centers.add(nextCenter);
             } else {
-                break; // 더 이상 중심점을 추가할 수 없음
+                break;
             }
         }
 
+        log.info("K-means++ 중심점 초기화 완료: {}개 중심점", centers.size());
         return centers;
     }
 
@@ -571,14 +490,13 @@ public class TripPlanningService {
      * 장소와 중심점들 사이의 최소 거리 계산
      */
     private int minDistanceToAnyCenter(
-            FilmingLocation location, List<FilmingLocation> centers, List<LocationDistanceInfo> distanceInfoList) {
+            FilmingLocation location, List<FilmingLocation> centers, List<LocationDistanceInfo> distanceMatrix) {
 
         return centers.stream()
                 .mapToInt(center ->
-                        distanceInfoList.stream()
+                        distanceMatrix.stream()
                                 .filter(info ->
-                                        (info.getFromLocationId().equals(location.getId()) && info.getToLocationId().equals(center.getId())) ||
-                                                (info.getFromLocationId().equals(center.getId()) && info.getToLocationId().equals(location.getId())))
+                                        (info.getFromLocationId().equals(location.getId()) && info.getToLocationId().equals(center.getId())))
                                 .findFirst()
                                 .map(LocationDistanceInfo::getTravelTimeMinutes)
                                 .orElse(Integer.MAX_VALUE))
@@ -590,17 +508,16 @@ public class TripPlanningService {
      * 장소와 가장 가까운 중심점 ID 찾기
      */
     private int findNearestCenterId(
-            FilmingLocation location, List<FilmingLocation> centers, List<LocationDistanceInfo> distanceInfoList) {
+            FilmingLocation location, List<FilmingLocation> centers, List<LocationDistanceInfo> distanceMatrix) {
 
         int nearestCenterId = 0;
         int minDistance = Integer.MAX_VALUE;
 
         for (int i = 0; i < centers.size(); i++) {
             FilmingLocation center = centers.get(i);
-            int distance = distanceInfoList.stream()
+            int distance = distanceMatrix.stream()
                     .filter(info ->
-                            (info.getFromLocationId().equals(location.getId()) && info.getToLocationId().equals(center.getId())) ||
-                                    (info.getFromLocationId().equals(center.getId()) && info.getToLocationId().equals(location.getId())))
+                            (info.getFromLocationId().equals(location.getId()) && info.getToLocationId().equals(center.getId())))
                     .findFirst()
                     .map(LocationDistanceInfo::getTravelTimeMinutes)
                     .orElse(Integer.MAX_VALUE);
@@ -615,11 +532,11 @@ public class TripPlanningService {
     }
 
     /**
-     * 빈 클러스터 처리 (가장 큰 클러스터에서 장소 재할당)
+     * 빈 클러스터 처리
      */
     private void handleEmptyClusters(
             Map<Integer, List<FilmingLocation>> clusters, List<FilmingLocation> locations,
-            List<FilmingLocation> centers, List<LocationDistanceInfo> distanceInfoList) {
+            List<FilmingLocation> centers, List<LocationDistanceInfo> distanceMatrix) {
 
         // 빈 클러스터 찾기
         List<Integer> emptyClusters = clusters.entrySet().stream()
@@ -647,10 +564,9 @@ public class TripPlanningService {
                 FilmingLocation farthestLocation = largestCluster.getValue().stream()
                         .max(Comparator.comparingInt(loc -> {
                             FilmingLocation center = centers.get(largestCluster.getKey());
-                            return distanceInfoList.stream()
+                            return distanceMatrix.stream()
                                     .filter(info ->
-                                            (info.getFromLocationId().equals(loc.getId()) && info.getToLocationId().equals(center.getId())) ||
-                                                    (info.getFromLocationId().equals(center.getId()) && info.getToLocationId().equals(loc.getId())))
+                                            (info.getFromLocationId().equals(loc.getId()) && info.getToLocationId().equals(center.getId())))
                                     .findFirst()
                                     .map(LocationDistanceInfo::getTravelTimeMinutes)
                                     .orElse(0);
@@ -668,10 +584,10 @@ public class TripPlanningService {
     }
 
     /**
-     * 새로운 클러스터 중심점 계산 (클러스터 내 장소들 간 평균 거리가 최소인 장소)
+     * 새로운 클러스터 중심점 계산
      */
     private List<FilmingLocation> calculateNewCenters(
-            Map<Integer, List<FilmingLocation>> clusters, List<LocationDistanceInfo> distanceInfoList) {
+            Map<Integer, List<FilmingLocation>> clusters, List<LocationDistanceInfo> distanceMatrix) {
 
         List<FilmingLocation> newCenters = new ArrayList<>();
 
@@ -696,10 +612,9 @@ public class TripPlanningService {
                             clusterLocations.stream()
                                     .filter(other -> !other.equals(loc))
                                     .mapToInt(other ->
-                                            distanceInfoList.stream()
+                                            distanceMatrix.stream()
                                                     .filter(info ->
-                                                            (info.getFromLocationId().equals(loc.getId()) && info.getToLocationId().equals(other.getId())) ||
-                                                                    (info.getFromLocationId().equals(other.getId()) && info.getToLocationId().equals(loc.getId())))
+                                                            (info.getFromLocationId().equals(loc.getId()) && info.getToLocationId().equals(other.getId())))
                                                     .findFirst()
                                                     .map(LocationDistanceInfo::getTravelTimeMinutes)
                                                     .orElse(Integer.MAX_VALUE))
@@ -739,14 +654,14 @@ public class TripPlanningService {
      * 출발지와 가장 가까운 클러스터를 0번째로 조정
      */
     private void adjustClusterOrderByOrigin(
-            Map<Integer, List<FilmingLocation>> clusters, List<LocationDistanceInfo> distanceInfoList,
+            Map<Integer, List<FilmingLocation>> clusters, List<LocationDistanceInfo> distanceMatrix,
             Double originLat, Double originLng) {
 
         if (clusters.size() <= 1) {
             return;
         }
 
-        // 각 클러스터의 대표 장소(중심)와 출발지 사이의 거리 계산
+        // 각 클러스터에서 출발지와 가장 가까운 장소를 찾아 거리 계산
         Map<Integer, Integer> clusterDistancesToOrigin = new HashMap<>();
 
         for (Map.Entry<Integer, List<FilmingLocation>> entry : clusters.entrySet()) {
@@ -757,7 +672,7 @@ public class TripPlanningService {
             // 클러스터 내 출발지와 가장 가까운 장소 찾기
             FilmingLocation closestLocation = entry.getValue().stream()
                     .min(Comparator.comparingInt(loc ->
-                            distanceInfoList.stream()
+                            distanceMatrix.stream()
                                     .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(loc.getId()))
                                     .findFirst()
                                     .map(LocationDistanceInfo::getTravelTimeMinutes)
@@ -765,7 +680,7 @@ public class TripPlanningService {
                     .orElse(entry.getValue().get(0));
 
             // 출발지와의 거리 저장
-            int distanceToOrigin = distanceInfoList.stream()
+            int distanceToOrigin = distanceMatrix.stream()
                     .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(closestLocation.getId()))
                     .findFirst()
                     .map(LocationDistanceInfo::getTravelTimeMinutes)
@@ -787,195 +702,82 @@ public class TripPlanningService {
             clusters.put(closestClusterId, temp);
         }
     }
+
     /**
-     * 각 클러스터 내에서 최적 경로 계산 (TSP 근사 - 가장 가까운 이웃 휴리스틱)
+     * 특정 키워드를 가진 장소 찾기
      */
-    private List<TripPlanResponseDto.DailyRouteDto> calculateOptimalRoutes(
-            Map<Integer, List<FilmingLocation>> clusters, List<LocationDistanceInfo> distanceInfoList,
-            Double originLat, Double originLng) {
-
-        List<TripPlanResponseDto.DailyRouteDto> dailyRoutes = new ArrayList<>();
-
-        // 클러스터 간 거리 계산
-        Map<Integer, Map<Integer, Integer>> interClusterDistances = calculateInterClusterDistances(
-                clusters, distanceInfoList);
-
-        // 클러스터 방문 순서 결정 (0번 클러스터부터 시작하여 가장 가까운 클러스터 방문)
-        List<Integer> clusterVisitOrder = calculateClusterVisitOrder(interClusterDistances);
-
-        // 각 클러스터에 대한 일일 경로 계산
-        for (int i = 0; i < clusterVisitOrder.size(); i++) {
-            int clusterId = clusterVisitOrder.get(i);
-            List<FilmingLocation> clusterLocations = clusters.get(clusterId);
-
-            if (clusterLocations.isEmpty()) {
-                continue;
-            }
-
-            // 클러스터 내 최적 경로 계산
-            List<FilmingLocation> optimalRoute = calculateOptimalRouteWithinCluster(
-                    clusterLocations, distanceInfoList, originLat, originLng, clusterId == 0);
-
-            // 경로 변환하여 DailyRouteDto 생성
-            TripPlanResponseDto.DailyRouteDto dailyRoute = createDailyRouteFromLocations(
-                    optimalRoute, distanceInfoList, i + 1);
-
-            dailyRoutes.add(dailyRoute);
-        }
-
-        return dailyRoutes;
+    private Optional<FilmingLocation> findLocationWithKeyword(List<FilmingLocation> locations, String keyword) {
+        return locations.stream()
+                .filter(location -> location.getRecommendationKeywords() != null &&
+                        location.getRecommendationKeywords().contains(keyword))
+                .findFirst();
     }
 
     /**
-     * 클러스터 간 거리 계산 (각 클러스터의 중심점 간 거리)
+     * 클러스터 내에서 제약 조건이 있는 최적 경로 계산 (Open TSP)
+     * - 야경 장소가 있으면 마지막 방문지로 고정
+     * - 첫번째 클러스터는 출발지를 고려
      */
-    private Map<Integer, Map<Integer, Integer>> calculateInterClusterDistances(
-            Map<Integer, List<FilmingLocation>> clusters, List<LocationDistanceInfo> distanceInfoList) {
+    private List<FilmingLocation> calculateOptimalRouteWithConstraint(
+            List<FilmingLocation> locations, List<LocationDistanceInfo> distanceMatrix,
+            Double originLat, Double originLng, FilmingLocation fixedEndLocation, boolean isFirstCluster) {
 
-        Map<Integer, Map<Integer, Integer>> interClusterDistances = new HashMap<>();
-
-        for (int i = 0; i < clusters.size(); i++) {
-            interClusterDistances.put(i, new HashMap<>());
-
-            for (int j = 0; j < clusters.size(); j++) {
-                if (i == j) continue;
-
-                List<FilmingLocation> clusterI = clusters.get(i);
-                List<FilmingLocation> clusterJ = clusters.get(j);
-
-                if (clusterI.isEmpty() || clusterJ.isEmpty()) {
-                    interClusterDistances.get(i).put(j, Integer.MAX_VALUE);
-                    continue;
-                }
-
-                // 각 클러스터에서 서로 가장 가까운 장소 쌍의 거리 계산
-                int minDistance = Integer.MAX_VALUE;
-
-                for (FilmingLocation locI : clusterI) {
-                    for (FilmingLocation locJ : clusterJ) {
-                        int distance = distanceInfoList.stream()
-                                .filter(info ->
-                                        (info.getFromLocationId().equals(locI.getId()) && info.getToLocationId().equals(locJ.getId())) ||
-                                                (info.getFromLocationId().equals(locJ.getId()) && info.getToLocationId().equals(locI.getId())))
-                                .findFirst()
-                                .map(LocationDistanceInfo::getTravelTimeMinutes)
-                                .orElse(Integer.MAX_VALUE);
-
-                        if (distance < minDistance) {
-                            minDistance = distance;
-                        }
-                    }
-                }
-
-                interClusterDistances.get(i).put(j, minDistance);
-            }
-        }
-
-        return interClusterDistances;
-    }
-
-    /**
-     * 클러스터 방문 순서 계산 (0번 클러스터로부터 가장 가까운 순서로)
-     */
-    private List<Integer> calculateClusterVisitOrder(Map<Integer, Map<Integer, Integer>> interClusterDistances) {
-        List<Integer> visitOrder = new ArrayList<>();
-        Set<Integer> visited = new HashSet<>();
-
-        // 0번 클러스터부터 시작
-        int currentCluster = 0;
-        visitOrder.add(currentCluster);
-        visited.add(currentCluster);
-
-        // 모든 클러스터를 가장 가까운 순서로 방문
-        while (visited.size() < interClusterDistances.size()) {
-            int nextCluster = -1;
-            int minDistance = Integer.MAX_VALUE;
-
-            Map<Integer, Integer> distances = interClusterDistances.get(currentCluster);
-
-            for (Map.Entry<Integer, Integer> entry : distances.entrySet()) {
-                int cluster = entry.getKey();
-                int distance = entry.getValue();
-
-                if (!visited.contains(cluster) && distance < minDistance) {
-                    minDistance = distance;
-                    nextCluster = cluster;
-                }
-            }
-
-            if (nextCluster == -1) break; // 더 이상 방문할 클러스터 없음
-
-            visitOrder.add(nextCluster);
-            visited.add(nextCluster);
-            currentCluster = nextCluster;
-        }
-
-        return visitOrder;
-    }
-
-    /**
-     * 클러스터 내에서 최적 경로 계산 (가장 가까운 이웃 휴리스틱)
-     * 개선점: 하루 최대 이동 시간 제한 적용
-     */
-    private List<FilmingLocation> calculateOptimalRouteWithinCluster(
-            List<FilmingLocation> locations, List<LocationDistanceInfo> distanceInfoList,
-            Double originLat, Double originLng, boolean isFirstCluster) {
+        log.info("클러스터 내 최적 경로 계산 시작: {}개 장소, 고정 종료 장소={}",
+                locations.size(), fixedEndLocation != null ? fixedEndLocation.getName() : "없음");
 
         if (locations.size() <= 1) {
             return new ArrayList<>(locations);
         }
 
-        List<FilmingLocation> route = new ArrayList<>();
-        Set<FilmingLocation> unvisited = new HashSet<>(locations);
+        // 고정 장소가 있으면 제외하고 계산 후 마지막에 추가
+        List<FilmingLocation> locationsToRoute = new ArrayList<>(locations);
+        if (fixedEndLocation != null) {
+            locationsToRoute.remove(fixedEndLocation);
+        }
 
-        // 첫번째 클러스터의 경우, 출발지와 가장 가까운 장소부터 시작
-        FilmingLocation current;
+        if (locationsToRoute.isEmpty()) {
+            return new ArrayList<>(locations); // 고정 장소만 있는 경우
+        }
+
+        // 경로 계산에 사용할 장소 목록
+        List<FilmingLocation> route = new ArrayList<>();
+
+        // 첫번째 장소 선택
+        FilmingLocation first;
         if (isFirstCluster && originLat != null && originLng != null) {
-            current = locations.stream()
+            // 출발지와 가장 가까운 장소를 첫번째로 선택
+            first = locationsToRoute.stream()
                     .min(Comparator.comparingInt(loc ->
-                            distanceInfoList.stream()
+                            distanceMatrix.stream()
                                     .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(loc.getId()))
                                     .findFirst()
                                     .map(LocationDistanceInfo::getTravelTimeMinutes)
                                     .orElse(Integer.MAX_VALUE)))
-                    .orElse(locations.get(0));
+                    .orElse(locationsToRoute.get(0));
         } else {
-            // 다른 클러스터는 임의의 장소부터 시작
-            current = locations.get(0);
+            // 임의로 첫번째 장소 선택
+            first = locationsToRoute.get(0);
         }
 
-        route.add(current);
-        unvisited.remove(current);
+        route.add(first);
+        locationsToRoute.remove(first);
 
-        // 개선점: 하루 총 이동 시간 추적
-        int currentTravelTime = 0;
-
-        // 가장 가까운 이웃 알고리즘
-        while (!unvisited.isEmpty()) {
-            FilmingLocation nearest = findNearestLocation(current, unvisited, distanceInfoList);
-
-            // 다음 장소까지의 이동 시간 계산
-            FilmingLocation finalCurrent = current;
-            int travelTime = distanceInfoList.stream()
-                    .filter(info ->
-                            (info.getFromLocationId().equals(finalCurrent.getId()) && info.getToLocationId().equals(nearest.getId())) ||
-                                    (info.getFromLocationId().equals(nearest.getId()) && info.getToLocationId().equals(finalCurrent.getId())))
-                    .findFirst()
-                    .map(LocationDistanceInfo::getTravelTimeMinutes)
-                    .orElse(0);
-
-            // 개선점: 하루 최대 이동 시간 초과 시 중단
-            if (currentTravelTime + travelTime > MAX_DAILY_TRAVEL_TIME_MINUTES) {
-                log.info("하루 최대 이동 시간({})분 초과로 경로 계획 중단. 현재: {}분",
-                        MAX_DAILY_TRAVEL_TIME_MINUTES, currentTravelTime);
-                break; // 남은 장소는 다음 일정으로
-            }
-
-            route.add(nearest);
-            currentTravelTime += travelTime;
-            unvisited.remove(nearest);
-            current = nearest;
+        // 최근접 이웃 알고리즘으로 남은 장소들 연결 (Open TSP)
+        FilmingLocation current = first;
+        while (!locationsToRoute.isEmpty()) {
+            FilmingLocation next = findNearestLocation(current, locationsToRoute, distanceMatrix);
+            route.add(next);
+            locationsToRoute.remove(next);
+            current = next;
         }
+
+        // 고정 장소가 있으면 마지막에 추가
+        if (fixedEndLocation != null) {
+            route.add(fixedEndLocation);
+        }
+
+        log.info("최적 경로 계산 완료: {}개 장소, 경로={}",
+                route.size(), route.stream().map(FilmingLocation::getName).collect(Collectors.joining(" -> ")));
 
         return route;
     }
@@ -984,25 +786,154 @@ public class TripPlanningService {
      * 현재 장소에서 가장 가까운 다음 장소 찾기
      */
     private FilmingLocation findNearestLocation(
-            FilmingLocation current, Set<FilmingLocation> candidates, List<LocationDistanceInfo> distanceInfoList) {
+            FilmingLocation current, List<FilmingLocation> candidates, List<LocationDistanceInfo> distanceMatrix) {
 
         return candidates.stream()
                 .min(Comparator.comparingInt(loc ->
-                        distanceInfoList.stream()
-                                .filter(info ->
-                                        (info.getFromLocationId().equals(current.getId()) && info.getToLocationId().equals(loc.getId())) ||
-                                                (info.getFromLocationId().equals(loc.getId()) && info.getToLocationId().equals(current.getId())))
+                        distanceMatrix.stream()
+                                .filter(info -> info.getFromLocationId().equals(current.getId()) &&
+                                        info.getToLocationId().equals(loc.getId()))
                                 .findFirst()
                                 .map(LocationDistanceInfo::getTravelTimeMinutes)
                                 .orElse(Integer.MAX_VALUE)))
-                .orElse(null);
+                .orElse(candidates.get(0));
+    }
+
+    /**
+     * 클러스터 방문 순서 최적화 (Open TSP)
+     */
+    private List<TripPlanResponseDto.DailyRouteDto> optimizeClusterOrder(
+            List<TripPlanResponseDto.DailyRouteDto> dailyRoutes,
+            List<FilmingLocation> allLocations,
+            List<LocationDistanceInfo> distanceMatrix,
+            Double originLat, Double originLng) {
+
+        if (dailyRoutes.size() <= 1) {
+            return dailyRoutes;
+        }
+
+        log.info("클러스터 간 방문 순서 최적화 시작: {}개 클러스터", dailyRoutes.size());
+
+        // 각 클러스터의 첫 번째 장소 ID 목록
+        Map<Integer, Long> firstLocationIds = new HashMap<>();
+        for (int i = 0; i < dailyRoutes.size(); i++) {
+            TripPlanResponseDto.DailyRouteDto route = dailyRoutes.get(i);
+            if (!route.getLocations().isEmpty()) {
+                firstLocationIds.put(i, route.getLocations().get(0).getLocationId());
+            }
+        }
+
+        // 출발지에서 각 클러스터 첫 장소까지의 거리 계산
+        Map<Integer, Integer> distancesToOrigin = new HashMap<>();
+        for (Map.Entry<Integer, Long> entry : firstLocationIds.entrySet()) {
+            int clusterId = entry.getKey();
+            Long firstLocationId = entry.getValue();
+
+            int distance = distanceMatrix.stream()
+                    .filter(info -> info.getFromLocationId() == 0 && info.getToLocationId().equals(firstLocationId))
+                    .findFirst()
+                    .map(LocationDistanceInfo::getTravelTimeMinutes)
+                    .orElse(Integer.MAX_VALUE);
+
+            distancesToOrigin.put(clusterId, distance);
+        }
+
+        // 출발지와 가장 가까운 클러스터부터 방문하는 순서 계산 (Open TSP)
+        List<Integer> clusterOrder = new ArrayList<>();
+        Set<Integer> visitedClusters = new HashSet<>();
+
+        // 출발지와 가장 가까운 클러스터부터 시작
+        int currentCluster = distancesToOrigin.entrySet().stream()
+                .min(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse(0);
+
+        clusterOrder.add(currentCluster);
+        visitedClusters.add(currentCluster);
+
+        // 클러스터 간의 거리 행렬 생성
+        Map<Integer, Map<Integer, Integer>> interClusterDistances = calculateInterClusterDistances(
+                firstLocationIds, distanceMatrix);
+
+        // 최근접 이웃 방식으로 나머지 클러스터 방문 순서 결정
+        while (visitedClusters.size() < dailyRoutes.size()) {
+            int nextCluster = -1;
+            int minDistance = Integer.MAX_VALUE;
+
+            for (int i = 0; i < dailyRoutes.size(); i++) {
+                if (visitedClusters.contains(i)) continue;
+
+                int distance = interClusterDistances.getOrDefault(currentCluster, Collections.emptyMap())
+                        .getOrDefault(i, Integer.MAX_VALUE);
+
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    nextCluster = i;
+                }
+            }
+
+            if (nextCluster == -1) break;
+
+            clusterOrder.add(nextCluster);
+            visitedClusters.add(nextCluster);
+            currentCluster = nextCluster;
+        }
+
+        // 방문 순서대로 일정 재배치
+        List<TripPlanResponseDto.DailyRouteDto> optimizedRoutes = new ArrayList<>();
+        for (int i = 0; i < clusterOrder.size(); i++) {
+            TripPlanResponseDto.DailyRouteDto route = dailyRoutes.get(clusterOrder.get(i));
+            route.setDay(i + 1); // 일차 번호 재조정
+            optimizedRoutes.add(route);
+        }
+
+        log.info("클러스터 방문 순서 최적화 완료: {}",
+                clusterOrder.stream().map(String::valueOf).collect(Collectors.joining(" -> ")));
+
+        return optimizedRoutes;
+    }
+
+    /**
+     * 클러스터 간 거리 계산
+     */
+    private Map<Integer, Map<Integer, Integer>> calculateInterClusterDistances(
+            Map<Integer, Long> firstLocationIds, List<LocationDistanceInfo> distanceMatrix) {
+
+        Map<Integer, Map<Integer, Integer>> interClusterDistances = new HashMap<>();
+
+        for (Map.Entry<Integer, Long> fromEntry : firstLocationIds.entrySet()) {
+            int fromCluster = fromEntry.getKey();
+            Long fromLocationId = fromEntry.getValue();
+
+            Map<Integer, Integer> distances = new HashMap<>();
+
+            for (Map.Entry<Integer, Long> toEntry : firstLocationIds.entrySet()) {
+                int toCluster = toEntry.getKey();
+                if (fromCluster == toCluster) continue;
+
+                Long toLocationId = toEntry.getValue();
+
+                int distance = distanceMatrix.stream()
+                        .filter(info -> info.getFromLocationId().equals(fromLocationId) &&
+                                info.getToLocationId().equals(toLocationId))
+                        .findFirst()
+                        .map(LocationDistanceInfo::getTravelTimeMinutes)
+                        .orElse(Integer.MAX_VALUE);
+
+                distances.put(toCluster, distance);
+            }
+
+            interClusterDistances.put(fromCluster, distances);
+        }
+
+        return interClusterDistances;
     }
 
     /**
      * 장소 리스트를 일일 경로 DTO로 변환
      */
     private TripPlanResponseDto.DailyRouteDto createDailyRouteFromLocations(
-            List<FilmingLocation> locations, List<LocationDistanceInfo> distanceInfoList, int day) {
+            List<FilmingLocation> locations, List<LocationDistanceInfo> distanceMatrix, int day) {
 
         List<TripPlanResponseDto.LocationRouteDto> locationRouteDtos = new ArrayList<>();
         int totalTravelTime = 0;
@@ -1017,7 +948,7 @@ public class TripPlanningService {
             if (i < locations.size() - 1) {
                 FilmingLocation nextLocation = locations.get(i + 1);
 
-                LocationDistanceInfo distanceInfo = distanceInfoList.stream()
+                LocationDistanceInfo distanceInfo = distanceMatrix.stream()
                         .filter(info ->
                                 info.getFromLocationId().equals(location.getId()) &&
                                         info.getToLocationId().equals(nextLocation.getId()))
@@ -1061,14 +992,5 @@ public class TripPlanningService {
                 .locations(locationRouteDtos)
                 .travelTimeMinutes(totalTravelTime)
                 .build();
-    }
-
-    /**
-     * 모든 일일 경로의 총 이동 시간 계산
-     */
-    private int calculateTotalTravelTimeFromRoutes(List<TripPlanResponseDto.DailyRouteDto> dailyRoutes) {
-        return dailyRoutes.stream()
-                .mapToInt(TripPlanResponseDto.DailyRouteDto::getTravelTimeMinutes)
-                .sum();
     }
 }
