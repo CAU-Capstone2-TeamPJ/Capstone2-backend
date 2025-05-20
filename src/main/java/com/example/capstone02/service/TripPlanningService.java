@@ -19,6 +19,7 @@ public class TripPlanningService {
 
     private final FilmingLocationService filmingLocationService;
     private final GoogleMapsDistanceService distanceService;
+    private final LocationTravelTimeService locationTravelTimeService;
     private final ConceptKeywordMapper conceptKeywordMapper;
 
     private static final int SECONDS_PER_MINUTE = 60;
@@ -174,64 +175,75 @@ public class TripPlanningService {
      * 장소 간 이동 시간 거리 행렬 계산
      */
     private List<LocationDistanceInfo> calculateDistanceMatrix(List<FilmingLocation> locations, Double originLat, Double originLng) {
-        List<LocationDistanceInfo> distanceMatrix = new ArrayList<>();
         int locationCount = locations.size();
+        Long movieId = null;
 
-        log.info("장소 간 거리 행렬 계산 시작: {}개 장소", locationCount);
-
-        // 출발지와 각 장소 사이의 거리 계산 (최초 클러스터 선택용)
-        if (originLat != null && originLng != null) {
-            for (FilmingLocation location : locations) {
-                int[] result = distanceService.calculateDistance(
-                        originLat, originLng,
-                        location.getLatitude(), location.getLongitude());
-
-                LocationDistanceInfo info = LocationDistanceInfo.builder()
-                        .fromLocationId(0L) // 출발지는 ID 0으로 표기
-                        .toLocationId(location.getId())
-                        .fromLocationName("Origin")
-                        .toLocationName(location.getName())
-                        .distanceMeters(result[0])
-                        .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
-                        .build();
-
-                distanceMatrix.add(info);
-            }
+        if (!locations.isEmpty()) {
+            movieId = locations.get(0).getMovie().getId();
         }
 
-        // 장소 간 이동 시간 계산 (a->b와 b->a 중 하나만 계산)
-        for (int i = 0; i < locationCount; i++) {
-            for (int j = i + 1; j < locationCount; j++) {
-                FilmingLocation fromLocation = locations.get(i);
-                FilmingLocation toLocation = locations.get(j);
+        log.info("장소 간 거리 행렬 계산 시작: {}개 장소, 영화 ID: {}", locationCount, movieId);
 
-                int[] result = distanceService.calculateDistance(
-                        fromLocation.getLatitude(), fromLocation.getLongitude(),
-                        toLocation.getLatitude(), toLocation.getLongitude());
+        List<LocationDistanceInfo> distanceMatrix = new ArrayList<>();
 
-                // a->b 방향 저장
-                LocationDistanceInfo forwardInfo = LocationDistanceInfo.builder()
-                        .fromLocationId(fromLocation.getId())
-                        .toLocationId(toLocation.getId())
-                        .fromLocationName(fromLocation.getName())
-                        .toLocationName(toLocation.getName())
-                        .distanceMeters(result[0])
-                        .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
-                        .build();
+        // 1. 출발지와 각 장소 사이의 거리 계산 (최초 클러스터 선택용)
+        if (originLat != null && originLng != null) {
+            List<LocationDistanceInfo> originDistances = locationTravelTimeService.calculateDistancesFromOrigin(
+                    originLat, originLng, locations);
+            distanceMatrix.addAll(originDistances);
+        }
 
-                distanceMatrix.add(forwardInfo);
+        // 2. 장소 간 이동 시간 가져오기 (DB에 저장된 값)
+        if (movieId != null) {
+            List<Long> locationIds = locations.stream()
+                    .map(FilmingLocation::getId)
+                    .collect(Collectors.toList());
 
-                // b->a 방향은 동일한 값으로 저장 (대칭성)
-                LocationDistanceInfo backwardInfo = LocationDistanceInfo.builder()
-                        .fromLocationId(toLocation.getId())
-                        .toLocationId(fromLocation.getId())
-                        .fromLocationName(toLocation.getName())
-                        .toLocationName(fromLocation.getName())
-                        .distanceMeters(result[0])
-                        .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
-                        .build();
+            // DB에서 필터링된 장소 간 이동 시간 정보 가져오기
+            List<LocationDistanceInfo> savedTravelTimes =
+                    locationTravelTimeService.getFilteredTravelTimes(movieId, locationIds);
 
-                distanceMatrix.add(backwardInfo);
+            if (!savedTravelTimes.isEmpty()) {
+                log.info("DB에서 {}개의 이동 시간 정보를 불러왔습니다.", savedTravelTimes.size());
+                distanceMatrix.addAll(savedTravelTimes);
+            } else {
+                log.warn("DB에 저장된 이동 시간 정보가 없습니다. 실시간 계산을 진행합니다.");
+
+                // 3. DB에 저장된 정보가 없을 경우 실시간 계산
+                for (int i = 0; i < locationCount; i++) {
+                    for (int j = i + 1; j < locationCount; j++) {
+                        FilmingLocation fromLocation = locations.get(i);
+                        FilmingLocation toLocation = locations.get(j);
+
+                        int[] result = distanceService.calculateDistance(
+                                fromLocation.getLatitude(), fromLocation.getLongitude(),
+                                toLocation.getLatitude(), toLocation.getLongitude());
+
+                        // a->b 방향 저장
+                        LocationDistanceInfo forwardInfo = LocationDistanceInfo.builder()
+                                .fromLocationId(fromLocation.getId())
+                                .toLocationId(toLocation.getId())
+                                .fromLocationName(fromLocation.getName())
+                                .toLocationName(toLocation.getName())
+                                .distanceMeters(result[0])
+                                .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
+                                .build();
+
+                        distanceMatrix.add(forwardInfo);
+
+                        // b->a 방향은 동일한 값으로 저장 (대칭성)
+                        LocationDistanceInfo backwardInfo = LocationDistanceInfo.builder()
+                                .fromLocationId(toLocation.getId())
+                                .toLocationId(fromLocation.getId())
+                                .fromLocationName(toLocation.getName())
+                                .toLocationName(fromLocation.getName())
+                                .distanceMeters(result[0])
+                                .travelTimeMinutes(result[1] / SECONDS_PER_MINUTE)
+                                .build();
+
+                        distanceMatrix.add(backwardInfo);
+                    }
+                }
             }
         }
 
