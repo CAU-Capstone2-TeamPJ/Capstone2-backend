@@ -157,26 +157,12 @@ public class FilmingLocationService {
                                 LocalDateTime.now(), ex.getStatusCode(), errorBody));
                         return Mono.error(ex);
                     })
-                    .retryWhen(Retry.backoff(3, Duration.ofMinutes(1)) // 초기 대기시간 1분, 3회 재시도
-                            .maxBackoff(Duration.ofMinutes(5)) // 최대 백오프 5분으로 설정
+                    .retryWhen(Retry.backoff(3, Duration.ofMinutes(30)) // 초기 대기시간을 30분으로 변경
+                            .maxBackoff(Duration.ofMinutes(30)) // 최대 백오프도 30분으로 설정
                             .filter(ex -> !(ex instanceof WebClientResponseException) ||
                                     (((WebClientResponseException) ex).getStatusCode().is5xxServerError() ||
                                             ((WebClientResponseException) ex).getStatusCode() == HttpStatus.TOO_MANY_REQUESTS))
-                            .doBeforeRetry(retrySignal -> {
-                                Throwable failure = retrySignal.failure();
-                                String errorMessage = (failure instanceof WebClientResponseException) ?
-                                        "상태 코드: " + ((WebClientResponseException) failure).getStatusCode() :
-                                        failure.getMessage();
-
-                                log.warn("{} 파이썬 서버 요청 재시도 {}/3 ({}분 후): {}",
-                                        logPrefix,
-                                        retrySignal.totalRetries() + 1,
-                                        1 * Math.pow(2, retrySignal.totalRetries()) > 5 ? 5 : 1 * Math.pow(2, retrySignal.totalRetries()),
-                                        errorMessage);
-                                addRequestLog(movieId, String.format("재시도 %d/3 - %s - %s분 후 재시도",
-                                        retrySignal.totalRetries() + 1, LocalDateTime.now(),
-                                        1 * Math.pow(2, retrySignal.totalRetries()) > 5 ? 5 : 1 * Math.pow(2, retrySignal.totalRetries())));
-                            }))
+                    )
                     .block(); // 동기 처리, 타임아웃은 WebClient 설정에 따름
 
             LocalDateTime requestEndTime = LocalDateTime.now();
