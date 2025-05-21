@@ -43,6 +43,14 @@ dependencies {
 
     // Swagger/OpenAPI 의존성
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.2.0'
+
+    // MacOS용 Netty DNS 리졸버 추가
+    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.119.Final:osx-x86_64'
+    implementation 'io.netty:netty-resolver-dns-native-macos:4.1.119.Final:osx-aarch_64'
+
+    // 다른 OS용 Netty DNS 리졸버도 추가
+    implementation 'io.netty:netty-transport-native-epoll:4.1.119.Final:linux-x86_64'
+    implementation 'io.netty:netty-transport-native-epoll:4.1.119.Final:linux-aarch_64'
 }
 
 tasks.named('test') {

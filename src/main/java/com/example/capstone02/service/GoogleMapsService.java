@@ -100,7 +100,7 @@ public class GoogleMapsService {
             String url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json";
 
             String finalUrl = url + "?location=" + latitude + "," + longitude +
-                    "&radius=500" +  // 500m 반경
+                    "&radius=50" +  // 50m 반경
                     "&key=" + apiKey;
 
             // WebClient로 Google Places API 호출
