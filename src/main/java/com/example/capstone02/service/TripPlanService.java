@@ -1,11 +1,14 @@
 package com.example.capstone02.service;
 
+import com.example.capstone02.dto.TripPlanDto;
 import com.example.capstone02.dto.TripPlanRequestDto;
 import com.example.capstone02.dto.TripPlanResponseDto;
+import com.example.capstone02.entity.FilmingLocation;
 import com.example.capstone02.entity.TripDay;
 import com.example.capstone02.entity.TripLocation;
 import com.example.capstone02.entity.TripPlan;
 import com.example.capstone02.entity.User;
+import com.example.capstone02.repository.FilmingLocationRepository;
 import com.example.capstone02.repository.TripPlanRepository;
 import com.example.capstone02.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -28,6 +32,8 @@ public class TripPlanService {
     private final TripPlanningService tripPlanningService;
     private final FilmingLocationService filmingLocationService;
     private final UserRepository userRepository;
+    private final FilmingLocationRepository filmingLocationRepository;
+    private final GoogleMapsService googleMapsService;
 
     /**
      * 여행 계획 생성 및 저장 (사용자 정보 포함)
@@ -134,7 +140,7 @@ public class TripPlanService {
     }
 
     /**
-     * 여행 계획 조회
+     * 여행 계획 조회 (이미지 포함)
      */
     @Transactional(readOnly = true)
     public Optional<TripPlan> getTripPlanById(Long id) {
@@ -257,5 +263,95 @@ public class TripPlanService {
     @Transactional(readOnly = true)
     public List<TripPlan> getTripPlansByUserId(Long userId) {
         return tripPlanRepository.findByUserId(userId);
+    }
+
+    /**
+     * 여행 계획 DTO 변환 (이미지 정보 포함)
+     */
+    @Transactional(readOnly = true)
+    public TripPlanDto getTripPlanDtoWithImages(Long id) {
+        TripPlan tripPlan = tripPlanRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("여행 계획을 찾을 수 없습니다: " + id));
+
+        // 기본 DTO 변환
+        TripPlanDto tripPlanDto = TripPlanDto.fromEntity(tripPlan);
+
+        // 각 장소별 이미지 정보 가져오기
+        for (TripPlanDto.TripDayDto dayDto : tripPlanDto.getTripDays()) {
+            for (TripPlanDto.TripLocationDto locationDto : dayDto.getLocations()) {
+                // 원본 FilmingLocation에서 이미지 정보 가져오기
+                addImagesForLocation(locationDto);
+            }
+        }
+
+        return tripPlanDto;
+    }
+
+    /**
+     * 장소에 이미지 정보 추가
+     */
+    private void addImagesForLocation(TripPlanDto.TripLocationDto locationDto) {
+        try {
+            // 원본 촬영지 ID로 FilmingLocation 조회
+            Long locationId = locationDto.getLocationId();
+            if (locationId == null) {
+                log.warn("장소 '{}' 원본 locationId가 없습니다", locationDto.getLocationName());
+                return;
+            }
+
+            Optional<FilmingLocation> filmingLocationOpt = filmingLocationRepository.findById(locationId);
+            if (filmingLocationOpt.isPresent()) {
+                FilmingLocation filmingLocation = filmingLocationOpt.get();
+                if (filmingLocation.getImages() != null && !filmingLocation.getImages().isEmpty()) {
+                    // 원본 장소의 이미지 가져오기
+                    locationDto.setImages(new ArrayList<>(filmingLocation.getImages()));
+                    log.debug("장소 '{}' 이미지 {}개 추가됨", locationDto.getLocationName(), filmingLocation.getImages().size());
+                } else if (locationDto.getLatitude() != null && locationDto.getLongitude() != null) {
+                    // 이미지가 없으면 실시간으로 구글맵스에서 이미지 가져오기 시도
+                    try {
+                        List<String> images = googleMapsService.getLocationImages(
+                                locationDto.getLatitude(), locationDto.getLongitude());
+                        if (!images.isEmpty()) {
+                            locationDto.setImages(images);
+                            log.debug("장소 '{}' 실시간 이미지 {}개 추가됨",
+                                    locationDto.getLocationName(), images.size());
+                        }
+                    } catch (Exception e) {
+                        log.warn("장소 '{}' 이미지 실시간 조회 실패: {}",
+                                locationDto.getLocationName(), e.getMessage());
+                    }
+                }
+            } else {
+                log.warn("장소 ID {}에 해당하는 원본 촬영지 정보를 찾을 수 없습니다", locationId);
+            }
+        } catch (Exception e) {
+            log.error("장소 '{}' 이미지 정보 추가 중 오류 발생: {}",
+                    locationDto.getLocationName(), e.getMessage());
+        }
+    }
+
+    /**
+     * 리스트 조회 시에도 이미지 정보 포함
+     */
+    @Transactional(readOnly = true)
+    public List<TripPlanDto> getTripPlanDtosWithImages(List<TripPlan> tripPlans) {
+        List<TripPlanDto> tripPlanDtos = tripPlans.stream()
+                .map(TripPlanDto::fromEntity)
+                .collect(Collectors.toList());
+
+        // 각 계획의 모든 장소에 이미지 정보 추가
+        for (TripPlanDto tripPlanDto : tripPlanDtos) {
+            if (tripPlanDto.getTripDays() != null) {
+                for (TripPlanDto.TripDayDto dayDto : tripPlanDto.getTripDays()) {
+                    if (dayDto.getLocations() != null) {
+                        for (TripPlanDto.TripLocationDto locationDto : dayDto.getLocations()) {
+                            addImagesForLocation(locationDto);
+                        }
+                    }
+                }
+            }
+        }
+
+        return tripPlanDtos;
     }
 }

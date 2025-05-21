@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/saved-trip-plans")
@@ -42,61 +41,56 @@ public class TripPlanController {
 //    }
 
     /**
-     * 저장된 여행 계획 조회
+     * 저장된 여행 계획 조회 (이미지 포함)
      */
     @GetMapping("/{id}")
     public ResponseEntity<TripPlanDto> getTripPlan(@PathVariable Long id) {
-        Optional<TripPlan> tripPlanOpt = tripPlanService.getTripPlanById(id);
-        return tripPlanOpt
-                .map(tripPlan -> ResponseEntity.ok(TripPlanDto.fromEntity(tripPlan)))
-                .orElse(ResponseEntity.notFound().build());
+        try {
+            TripPlanDto tripPlanDto = tripPlanService.getTripPlanDtoWithImages(id);
+            return ResponseEntity.ok(tripPlanDto);
+        } catch (RuntimeException e) {
+            log.error("여행 계획 조회 중 오류 발생: {}", e.getMessage());
+            return ResponseEntity.notFound().build();
+        }
     }
 
     /**
-     * 영화별 여행 계획 조회
+     * 영화별 여행 계획 조회 (이미지 포함)
      */
     @GetMapping("/movie/{movieId}")
     public ResponseEntity<List<TripPlanDto>> getTripPlansByMovie(@PathVariable Long movieId) {
         List<TripPlan> tripPlans = tripPlanService.getTripPlansByMovieId(movieId);
-        List<TripPlanDto> tripPlanDtos = tripPlans.stream()
-                .map(TripPlanDto::fromEntity)
-                .collect(Collectors.toList());
+        List<TripPlanDto> tripPlanDtos = tripPlanService.getTripPlanDtosWithImages(tripPlans);
         return ResponseEntity.ok(tripPlanDtos);
     }
 
     /**
-     * 국가별 여행 계획 조회
+     * 국가별 여행 계획 조회 (이미지 포함)
      */
     @GetMapping("/country/{country}")
     public ResponseEntity<List<TripPlanDto>> getTripPlansByCountry(@PathVariable String country) {
         List<TripPlan> tripPlans = tripPlanService.getTripPlansByCountry(country);
-        List<TripPlanDto> tripPlanDtos = tripPlans.stream()
-                .map(TripPlanDto::fromEntity)
-                .collect(Collectors.toList());
+        List<TripPlanDto> tripPlanDtos = tripPlanService.getTripPlanDtosWithImages(tripPlans);
         return ResponseEntity.ok(tripPlanDtos);
     }
 
     /**
-     * 컨셉별 여행 계획 조회
+     * 컨셉별 여행 계획 조회 (이미지 포함)
      */
     @GetMapping("/concept/{concept}")
     public ResponseEntity<List<TripPlanDto>> getTripPlansByConcept(@PathVariable String concept) {
         List<TripPlan> tripPlans = tripPlanService.getTripPlansByConcept(concept);
-        List<TripPlanDto> tripPlanDtos = tripPlans.stream()
-                .map(TripPlanDto::fromEntity)
-                .collect(Collectors.toList());
+        List<TripPlanDto> tripPlanDtos = tripPlanService.getTripPlanDtosWithImages(tripPlans);
         return ResponseEntity.ok(tripPlanDtos);
     }
 
     /**
-     * 모든 여행 계획 조회
+     * 모든 여행 계획 조회 (이미지 포함)
      */
     @GetMapping
     public ResponseEntity<List<TripPlanDto>> getAllTripPlans() {
         List<TripPlan> tripPlans = tripPlanService.getAllTripPlans();
-        List<TripPlanDto> tripPlanDtos = tripPlans.stream()
-                .map(TripPlanDto::fromEntity)
-                .collect(Collectors.toList());
+        List<TripPlanDto> tripPlanDtos = tripPlanService.getTripPlanDtosWithImages(tripPlans);
         return ResponseEntity.ok(tripPlanDtos);
     }
 

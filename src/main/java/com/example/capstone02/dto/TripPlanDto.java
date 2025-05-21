@@ -62,6 +62,7 @@ public class TripPlanDto {
         private Integer travelDistanceToNext;
         private String concept;
         private List<String> recommendationKeywords;
+        private List<String> images; // 장소 이미지 URL 목록 추가
     }
 
     @Data
@@ -152,6 +153,7 @@ public class TripPlanDto {
                 .travelDistanceToNext(tripLocation.getTravelDistanceToNext())
                 .concept(tripLocation.getConcept())
                 .recommendationKeywords(tripLocation.getRecommendationKeywords())
+                .images(new ArrayList<>()) // 기본적으로 빈 리스트로 초기화
                 .build();
     }
 }

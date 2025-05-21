@@ -1,7 +1,10 @@
 package com.example.capstone02.service;
 
+import com.example.capstone02.dto.TripPlanDto;
+import com.example.capstone02.entity.FilmingLocation;
 import com.example.capstone02.entity.TripPlan;
 import com.example.capstone02.entity.User;
+import com.example.capstone02.repository.FilmingLocationRepository;
 import com.example.capstone02.repository.TripPlanRepository;
 import com.example.capstone02.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,9 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +27,9 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final TripPlanRepository tripPlanRepository;
+    private final FilmingLocationRepository filmingLocationRepository;
+    private final GoogleMapsService googleMapsService;
+    private final TripPlanService tripPlanService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -65,6 +73,15 @@ public class UserService {
         }
 
         return Collections.emptyList();
+    }
+
+    /**
+     * 사용자의 여행 계획 목록 조회 (DTO 변환 및 이미지 포함)
+     */
+    @Transactional(readOnly = true)
+    public List<TripPlanDto> getUserTripPlansWithImages(String email) {
+        List<TripPlan> tripPlans = getUserTripPlans(email);
+        return tripPlanService.getTripPlanDtosWithImages(tripPlans);
     }
 
     /**

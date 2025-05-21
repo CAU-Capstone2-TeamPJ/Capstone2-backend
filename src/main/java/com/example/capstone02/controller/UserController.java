@@ -3,7 +3,6 @@ package com.example.capstone02.controller;
 import com.example.capstone02.config.JwtTokenProvider;
 import com.example.capstone02.dto.TripPlanDto;
 import com.example.capstone02.dto.UserResponseDto;
-import com.example.capstone02.entity.TripPlan;
 import com.example.capstone02.entity.User;
 import com.example.capstone02.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +16,6 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/user")
@@ -87,38 +85,23 @@ public class UserController {
     }
 
     /**
-     * 사용자의 여행 계획 목록 조회 (DTO 변환 추가)
+     * 사용자의 여행 계획 목록 조회 (이미지 포함)
      */
     @GetMapping("/trip-plans")
     public ResponseEntity<List<TripPlanDto>> getUserTripPlans() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        if (authentication == null || !authentication.isAuthenticated() ||
-                "anonymousUser".equals(authentication.getPrincipal())) {
-            return ResponseEntity.badRequest().build();
-        }
-
-        String email = null;
-        Object principal = authentication.getPrincipal();
-
-        if (principal instanceof UserDetails) {
-            email = ((UserDetails) principal).getUsername();
-        } else if (principal instanceof String) {
-            email = (String) principal;
-        }
+        String email = getCurrentUserEmail();
 
         if (email == null) {
+            log.warn("사용자 인증 정보를 찾을 수 없습니다");
             return ResponseEntity.badRequest().build();
         }
 
         try {
-            // 엔티티를 DTO로 변환하여 순환 참조 문제 해결
-            List<TripPlan> tripPlans = userService.getUserTripPlans(email);
-            List<TripPlanDto> tripPlanDtos = tripPlans.stream()
-                    .map(TripPlanDto::fromEntity)
-                    .collect(Collectors.toList());
+            // 이미지 정보가 포함된 여행 계획 DTO 반환
+            List<TripPlanDto> tripPlansWithImages = userService.getUserTripPlansWithImages(email);
+            log.info("사용자 {}의 여행 계획 {}개 조회 완료 (이미지 포함)", email, tripPlansWithImages.size());
 
-            return ResponseEntity.ok(tripPlanDtos);
+            return ResponseEntity.ok(tripPlansWithImages);
         } catch (Exception e) {
             log.error("여행 계획 조회 중 오류 발생: {}", e.getMessage(), e);
             return ResponseEntity.badRequest().build();
@@ -191,5 +174,29 @@ public class UserController {
             tokenInfo.put("error", e.getMessage());
             return ResponseEntity.ok(tokenInfo);
         }
+    }
+
+    /**
+     * 현재 인증된 사용자의 이메일 가져오기
+     */
+    private String getCurrentUserEmail() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() ||
+                "anonymousUser".equals(authentication.getPrincipal())) {
+            return null;
+        }
+
+        Object principal = authentication.getPrincipal();
+
+        // JWT 토큰 인증의 경우 principal이 이메일 문자열
+        if (principal instanceof String) {
+            return (String) principal;
+        }
+        // Spring Security UserDetails 사용 시
+        else if (principal instanceof UserDetails) {
+            return ((UserDetails) principal).getUsername();
+        }
+
+        return null;
     }
 }
