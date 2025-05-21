@@ -266,6 +266,59 @@ public class FilmingLocationController {
     }
 
     /**
+     * JSON 문자열에서 직접 촬영지 정보를 저장
+     */
+    @PostMapping("/save-from-json/movie/{movieId}")
+    public ResponseEntity<?> saveFilmingLocationsFromJson(
+            @PathVariable Long movieId, @RequestBody String jsonContent) {
+        String logPrefix = "[JSON저장][" + movieId + "]";
+        log.info("{} 영화 ID {}의 촬영지 정보를 JSON에서 저장 요청 - 시간: {}",
+                logPrefix, movieId, LocalDateTime.now());
+
+        long startTime = System.currentTimeMillis();
+
+        try {
+            List<FilmingLocation> filmingLocations = filmingLocationService.saveFilmingLocationsFromJson(movieId, jsonContent);
+            log.info("{} 영화 ID {}의 촬영지 정보 {}개 JSON 저장 완료 - 시간: {}",
+                    logPrefix, movieId, filmingLocations.size(), LocalDateTime.now());
+
+            // 엔티티를 DTO로 변환
+            List<FilmingLocationDto> locationDtos = filmingLocations.stream()
+                    .map(this::convertToDto)
+                    .collect(Collectors.toList());
+
+            long endTime = System.currentTimeMillis();
+            log.info("{} 영화 ID {}의 촬영지 정보 JSON 저장 응답 - {}개 장소, 소요 시간: {}ms - 시간: {}",
+                    logPrefix, movieId, locationDtos.size(), (endTime - startTime), LocalDateTime.now());
+
+            // 결과를 명확히 알 수 있는 응답 생성
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("movieId", movieId);
+            response.put("movieTitle", filmingLocationService.getMovieTitle(movieId));
+            response.put("locationsCount", locationDtos.size());
+            response.put("locations", locationDtos);
+            response.put("message", String.format("%d개의 촬영지 정보가 성공적으로 저장되었습니다.", locationDtos.size()));
+            response.put("timestamp", LocalDateTime.now().toString());
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            long endTime = System.currentTimeMillis();
+            log.error("{} 영화 ID {}의 촬영지 정보 JSON 저장 실패: {} - 소요 시간: {}ms, 시간: {}",
+                    logPrefix, movieId, e.getMessage(), (endTime - startTime), LocalDateTime.now(), e);
+
+            // 오류 응답 생성
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("movieId", movieId);
+            errorResponse.put("error", e.getMessage());
+            errorResponse.put("timestamp", LocalDateTime.now().toString());
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
+
+    /**
      * 장소 ID로 촬영지 상세 정보 조회 API
      */
     @GetMapping("/{locationId}")

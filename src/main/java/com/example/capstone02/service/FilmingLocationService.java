@@ -7,6 +7,7 @@ import com.example.capstone02.entity.FilmingLocation;
 import com.example.capstone02.entity.Movie;
 import com.example.capstone02.repository.FilmingLocationRepository;
 import com.example.capstone02.repository.MovieRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.maps.model.LatLng;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -232,6 +233,90 @@ public class FilmingLocationService {
             addRequestLog(movieId, String.format("예외 발생 - %s - %s",
                     LocalDateTime.now(), e.getMessage()));
             throw e; // 예외 다시 던지기
+        }
+    }
+
+    /**
+     * JSON 문자열을 직접 파싱하여 촬영지 정보 저장
+     */
+    @Transactional
+    public List<FilmingLocation> saveFilmingLocationsFromJson(Long movieId, String jsonContent) {
+        String logPrefix = "[JSON저장][" + movieId + "]";
+        log.info("{} 영화 ID {}에 대한 촬영지 정보를 JSON 문자열에서 저장 시작 - 시간: {}",
+                logPrefix, movieId, LocalDateTime.now());
+        addRequestLog(movieId, String.format("JSON 저장 시작 - %s", LocalDateTime.now()));
+
+        try {
+            // 1. 영화 정보 조회
+            Movie movie = movieRepository.findById(movieId)
+                    .orElseThrow(() -> new RuntimeException("영화를 찾을 수 없습니다: " + movieId));
+            log.debug("{} 영화 정보 조회 완료: {}", logPrefix, movie.getTitle());
+            addRequestLog(movieId, String.format("영화 정보 조회 완료 - %s - 제목: %s",
+                    LocalDateTime.now(), movie.getTitle()));
+
+            // 2. JSON 문자열 파싱
+            ObjectMapper objectMapper = new ObjectMapper();
+            FilmingLocationResponseDto responseDto = objectMapper.readValue(jsonContent, FilmingLocationResponseDto.class);
+
+            if (responseDto == null || responseDto.getLocations() == null || responseDto.getLocations().isEmpty()) {
+                log.warn("{} 영화 ID {}에 대한 JSON 데이터에 촬영지 정보가 없습니다", logPrefix, movieId);
+                addRequestLog(movieId, String.format("JSON 데이터에 촬영지 정보 없음 - %s", LocalDateTime.now()));
+                return List.of();
+            }
+
+            log.info("{} JSON 파싱 완료 - 영화 ID: {}, 촬영지 수: {}",
+                    logPrefix, responseDto.getMovieId(), responseDto.getLocations().size());
+            addRequestLog(movieId, String.format("JSON 파싱 완료 - %s - %d개 장소",
+                    LocalDateTime.now(), responseDto.getLocations().size()));
+
+            // 3. 기존 촬영지 정보 삭제 (업데이트 시)
+            if (filmingLocationRepository.existsByMovieId(movieId)) {
+                log.info("{} 영화 ID {}의 기존 촬영지 정보를 삭제합니다", logPrefix, movieId);
+                filmingLocationRepository.deleteAllByMovieId(movieId);
+                addRequestLog(movieId, String.format("기존 촬영지 정보 삭제 - %s", LocalDateTime.now()));
+            }
+
+            // 4. 새로운 촬영지 정보 저장
+            List<FilmingLocation> filmingLocations = responseDto.getLocations().stream()
+                    .map(locationInfo -> {
+                        FilmingLocation location = FilmingLocation.builder()
+                                .movie(movie)
+                                .name(locationInfo.getName())
+                                .country(locationInfo.getCountry())
+                                .description(locationInfo.getDescription())
+                                .address(locationInfo.getAddress())
+                                .durationTime(locationInfo.getDurationTime())
+                                .mentionRate(locationInfo.getMentionRate())
+                                .mentionCount(locationInfo.getMentionCount())
+                                .build();
+
+                        // 추천 키워드 설정
+                        if (locationInfo.getRecommendationKeywords() != null) {
+                            location.setRecommendationKeywords(locationInfo.getRecommendationKeywords());
+                        }
+
+                        // 주변 키워드 설정
+                        if (locationInfo.getNearbyKeywords() != null) {
+                            location.setNearbyKeywords(locationInfo.getNearbyKeywords());
+                        }
+
+                        return location;
+                    })
+                    .collect(Collectors.toList());
+
+            List<FilmingLocation> savedLocations = filmingLocationRepository.saveAll(filmingLocations);
+            log.info("{} 영화 ID {}에 대한 촬영지 정보 {}개 저장 완료 - 시간: {}",
+                    logPrefix, movieId, savedLocations.size(), LocalDateTime.now());
+            addRequestLog(movieId, String.format("촬영지 정보 %d개 저장 완료 - %s",
+                    savedLocations.size(), LocalDateTime.now()));
+
+            return savedLocations;
+        } catch (Exception e) {
+            log.error("{} 영화 ID {}에 대한 JSON 문자열 처리 중 예외 발생: {}",
+                    logPrefix, movieId, e.getMessage(), e);
+            addRequestLog(movieId, String.format("예외 발생 - %s - %s",
+                    LocalDateTime.now(), e.getMessage()));
+            throw new RuntimeException("JSON 문자열 처리 중 오류 발생: " + e.getMessage(), e);
         }
     }
 
