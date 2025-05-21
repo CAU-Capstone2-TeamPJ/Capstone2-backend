@@ -1,9 +1,11 @@
 package com.example.capstone02.controller;
 
+import com.example.capstone02.dto.FilmingLocationDetailDto;
 import com.example.capstone02.entity.FilmingLocation;
 import com.example.capstone02.service.FilmingLocationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -262,6 +264,56 @@ public class FilmingLocationController {
 
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * 장소 ID로 촬영지 상세 정보 조회 API
+     */
+    @GetMapping("/{locationId}")
+    public ResponseEntity<FilmingLocationDetailDto> getFilmingLocationById(@PathVariable Long locationId) {
+        String logPrefix = "[장소조회][" + locationId + "]";
+        log.info("{} 장소 ID {}의 상세 정보 조회 요청", logPrefix, locationId);
+
+        try {
+            FilmingLocationDetailDto locationDetail = filmingLocationService.getFilmingLocationById(locationId);
+            log.info("{} 장소 ID {}('{}')의 상세 정보 조회 성공",
+                    logPrefix, locationId, locationDetail.getName());
+
+            return ResponseEntity.ok(locationDetail);
+        } catch (Exception e) {
+            log.error("{} 장소 ID {}의 상세 정보 조회 중 오류 발생: {}",
+                    logPrefix, locationId, e.getMessage(), e);
+
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(null);
+        }
+    }
+
+//    /**
+//     * 영화 ID와 장소 ID로 촬영지 상세 정보 조회 API
+//     */
+//    @GetMapping("/movie/{movieId}/location/{locationId}")
+//    public ResponseEntity<FilmingLocationDetailDto> getFilmingLocationByMovieIdAndLocationId(
+//            @PathVariable Long movieId, @PathVariable Long locationId) {
+//
+//        String logPrefix = "[장소조회][영화:" + movieId + "][장소:" + locationId + "]";
+//        log.info("{} 영화 ID {}, 장소 ID {}의 상세 정보 조회 요청", logPrefix, movieId, locationId);
+//
+//        try {
+//            FilmingLocationDetailDto locationDetail =
+//                    filmingLocationService.getFilmingLocationByMovieIdAndLocationId(movieId, locationId);
+//
+//            log.info("{} 영화 ID {}, 장소 ID {}('{}')의 상세 정보 조회 성공",
+//                    logPrefix, movieId, locationId, locationDetail.getName());
+//
+//            return ResponseEntity.ok(locationDetail);
+//        } catch (Exception e) {
+//            log.error("{} 영화 ID {}, 장소 ID {}의 상세 정보 조회 중 오류 발생: {}",
+//                    logPrefix, movieId, locationId, e.getMessage(), e);
+//
+//            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+//                    .body(null);
+//        }
+//    }
 
     // 엔티티를 DTO로 변환하는 헬퍼 메서드
     private FilmingLocationDto convertToDto(FilmingLocation location) {

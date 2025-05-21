@@ -1,5 +1,6 @@
 package com.example.capstone02.service;
 
+import com.example.capstone02.dto.FilmingLocationDetailDto;
 import com.example.capstone02.dto.FilmingLocationResponseDto;
 import com.example.capstone02.dto.MovieInfoRequestDto;
 import com.example.capstone02.entity.FilmingLocation;
@@ -461,5 +462,79 @@ public class FilmingLocationService {
         return movieRepository.findById(movieId)
                 .map(Movie::getTitle)
                 .orElse("Unknown Movie");
+    }
+
+    /**
+     * 장소 ID로 촬영지 정보 조회
+     */
+    @Transactional(readOnly = true)
+    public FilmingLocationDetailDto getFilmingLocationById(Long locationId) {
+        FilmingLocation location = filmingLocationRepository.findById(locationId)
+                .orElseThrow(() -> new RuntimeException("촬영지 정보를 찾을 수 없습니다: " + locationId));
+
+        log.info("장소 ID {}의 촬영지 '{}' 정보 조회", locationId, location.getName());
+
+        // 위치 정보(위도/경도)가 없으면 주소를 기반으로 위치 정보 가져오기 시도
+        if ((location.getLatitude() == null || location.getLongitude() == null) &&
+                location.getAddress() != null && !location.getAddress().isEmpty()) {
+            try {
+                log.info("장소 '{}' 위치 정보 조회 시도 (주소: {})", location.getName(), location.getAddress());
+
+                // 구글 지오코딩 API로 위치 정보 가져오기
+                LatLng coordinates = googleMapsService.getGeocode(location.getAddress());
+
+                if (coordinates != null) {
+                    location.setLatitude(coordinates.lat);
+                    location.setLongitude(coordinates.lng);
+                    filmingLocationRepository.save(location);
+
+                    log.info("장소 '{}' 위치 정보 업데이트: 위도 {}, 경도 {}",
+                            location.getName(), coordinates.lat, coordinates.lng);
+                }
+            } catch (Exception e) {
+                log.warn("장소 '{}' 위치 정보 조회 실패: {}", location.getName(), e.getMessage());
+            }
+        }
+
+        // 이미지가 없으면 실시간으로 이미지 조회 시도
+        if ((location.getImages() == null || location.getImages().isEmpty()) &&
+                location.getLatitude() != null && location.getLongitude() != null) {
+            try {
+                log.info("장소 '{}' 이미지 조회 시도", location.getName());
+
+                // 구글 Places API로 이미지 가져오기
+                List<String> images = googleMapsService.getLocationImages(location.getLatitude(), location.getLongitude());
+
+                if (images != null && !images.isEmpty()) {
+                    location.setImages(images);
+                    filmingLocationRepository.save(location);
+
+                    log.info("장소 '{}' 이미지 {}개 업데이트", location.getName(), images.size());
+                }
+            } catch (Exception e) {
+                log.warn("장소 '{}' 이미지 조회 실패: {}", location.getName(), e.getMessage());
+            }
+        }
+
+        return FilmingLocationDetailDto.fromEntity(location);
+    }
+
+    /**
+     * 영화 ID와 장소 ID로 촬영지 정보 조회 (영화 ID 검증 포함)
+     */
+    @Transactional(readOnly = true)
+    public FilmingLocationDetailDto getFilmingLocationByMovieIdAndLocationId(Long movieId, Long locationId) {
+        FilmingLocation location = filmingLocationRepository.findById(locationId)
+                .orElseThrow(() -> new RuntimeException("촬영지 정보를 찾을 수 없습니다: " + locationId));
+
+        // 영화 ID 검증
+        if (location.getMovie() == null || !location.getMovie().getId().equals(movieId)) {
+            throw new RuntimeException("해당 영화의 촬영지가 아닙니다: 영화 ID " + movieId + ", 장소 ID " + locationId);
+        }
+
+        log.info("영화 ID {}, 장소 ID {}의 촬영지 '{}' 정보 조회",
+                movieId, locationId, location.getName());
+
+        return FilmingLocationDetailDto.fromEntity(location);
     }
 }
