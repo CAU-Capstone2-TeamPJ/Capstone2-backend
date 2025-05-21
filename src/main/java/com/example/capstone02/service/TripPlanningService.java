@@ -21,6 +21,7 @@ public class TripPlanningService {
     private final GoogleMapsDistanceService distanceService;
     private final LocationTravelTimeService locationTravelTimeService;
     private final ConceptKeywordMapper conceptKeywordMapper;
+    private final GoogleMapsService googleMapsService;
 
     private static final int SECONDS_PER_MINUTE = 60;
     private static final int MINUTES_PER_HOUR = 60;
@@ -981,6 +982,20 @@ public class TripPlanningService {
                 if (concept != null) break;
             }
 
+            // 장소 이미지 정보 가져오기
+            List<String> images = new ArrayList<>();
+            if (location.getImages() != null && !location.getImages().isEmpty()) {
+                images = location.getImages();
+            } else if (location.getLatitude() != null && location.getLongitude() != null) {
+                // 이미지가 없으면 실시간으로 이미지 조회 시도
+                try {
+                    images = googleMapsService.getLocationImages(location.getLatitude(), location.getLongitude());
+                    log.info("장소 '{}' 이미지 실시간 조회: {}개", location.getName(), images.size());
+                } catch (Exception e) {
+                    log.warn("장소 '{}' 이미지 조회 실패: {}", location.getName(), e.getMessage());
+                }
+            }
+
             // LocationRouteDto 생성
             TripPlanResponseDto.LocationRouteDto locationRouteDto = TripPlanResponseDto.LocationRouteDto.builder()
                     .locationId(location.getId())
@@ -993,6 +1008,7 @@ public class TripPlanningService {
                     .travelDistanceToNext(distanceToNext)
                     .recommendationKeywords(location.getRecommendationKeywords())
                     .concept(concept)
+                    .images(images)  // 이미지 정보 추가
                     .build();
 
             locationRouteDtos.add(locationRouteDto);

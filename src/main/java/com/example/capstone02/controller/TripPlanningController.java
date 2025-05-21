@@ -155,9 +155,6 @@ public class TripPlanningController {
         return ResponseEntity.ok(allConcepts.contains(concept));
     }
 
-    /**
-     * 응답 확장 DTO - 저장 ID와 이름 추가
-     */
     @lombok.Data
     @lombok.NoArgsConstructor
     @lombok.AllArgsConstructor
