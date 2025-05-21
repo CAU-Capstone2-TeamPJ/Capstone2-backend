@@ -1,6 +1,7 @@
 package com.example.capstone02.controller;
 
 import com.example.capstone02.config.JwtTokenProvider;
+import com.example.capstone02.dto.MovieDetailDto;
 import com.example.capstone02.dto.TripPlanDto;
 import com.example.capstone02.dto.UserResponseDto;
 import com.example.capstone02.entity.User;
@@ -198,5 +199,28 @@ public class UserController {
         }
 
         return null;
+    }
+
+    /**
+     * 사용자가 좋아요한 영화 목록 조회
+     */
+    @GetMapping("/liked-movies")
+    public ResponseEntity<List<MovieDetailDto>> getLikedMovies() {
+        String email = getCurrentUserEmail();
+
+        if (email == null) {
+            log.warn("사용자 인증 정보를 찾을 수 없습니다");
+            return ResponseEntity.badRequest().build();
+        }
+
+        try {
+            List<MovieDetailDto> likedMovies = userService.getLikedMovies(email);
+            log.info("사용자 {}의 좋아요한 영화 {}개 조회 완료", email, likedMovies.size());
+
+            return ResponseEntity.ok(likedMovies);
+        } catch (Exception e) {
+            log.error("좋아요한 영화 목록 조회 중 오류 발생: {}", e.getMessage(), e);
+            return ResponseEntity.badRequest().build();
+        }
     }
 }

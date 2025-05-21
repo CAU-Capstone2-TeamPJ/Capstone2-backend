@@ -126,4 +126,37 @@ public class MovieLikeService {
                 .filter(movie -> movie != null)
                 .collect(Collectors.toList());
     }
+
+    /**
+     * 사용자가 좋아요한 영화 목록 조회
+     */
+    @Transactional(readOnly = true)
+    public List<MovieDetailDto> getLikedMoviesByUser(String userEmail) {
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + userEmail));
+
+        List<Movie> likedMovies = movieLikeRepository.findMoviesByUserId(user.getId());
+
+        return likedMovies.stream()
+                .map(movie -> {
+                    MovieDetailDto dto = MovieDetailDto.fromEntity(movie);
+                    // 좋아요 수 설정
+                    Long likesCount = movieLikeRepository.countByMovieId(movie.getId());
+                    dto.setLikesCount(likesCount.intValue());
+                    dto.setIsLiked(true); // 사용자가 좋아요한 영화이므로 true로 설정
+                    return dto;
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 사용자가 좋아요한 영화 ID 목록 조회
+     */
+    @Transactional(readOnly = true)
+    public List<Long> getLikedMovieIdsByUser(String userEmail) {
+        User user = userRepository.findByEmail(userEmail)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + userEmail));
+
+        return movieLikeRepository.findMovieIdsByUserId(user.getId());
+    }
 }

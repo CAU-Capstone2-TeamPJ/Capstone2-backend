@@ -21,4 +21,10 @@ public interface MovieLikeRepository extends JpaRepository<MovieLike, Long> {
 
     @Query("SELECT m.id FROM Movie m LEFT JOIN MovieLike ml ON m.id = ml.movie.id GROUP BY m.id ORDER BY COUNT(ml.id) DESC")
     List<Long> findMovieIdsByLikesCountDesc();
+
+    @Query("SELECT ml.movie FROM MovieLike ml WHERE ml.user.id = :userId")
+    List<Movie> findMoviesByUserId(Long userId);
+
+    @Query("SELECT ml.movie.id FROM MovieLike ml WHERE ml.user.id = :userId")
+    List<Long> findMovieIdsByUserId(Long userId);
 }

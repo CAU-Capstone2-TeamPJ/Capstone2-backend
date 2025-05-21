@@ -1,5 +1,6 @@
 package com.example.capstone02.service;
 
+import com.example.capstone02.dto.MovieDetailDto;
 import com.example.capstone02.dto.TripPlanDto;
 import com.example.capstone02.entity.FilmingLocation;
 import com.example.capstone02.entity.TripPlan;
@@ -30,6 +31,7 @@ public class UserService {
     private final FilmingLocationRepository filmingLocationRepository;
     private final GoogleMapsService googleMapsService;
     private final TripPlanService tripPlanService;
+    private final MovieLikeService movieLikeService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -94,5 +96,17 @@ public class UserService {
 
         user.setName(name);
         return userRepository.save(user);
+    }
+
+    /**
+     * 사용자가 좋아요한 영화 목록 조회
+     */
+    @Transactional(readOnly = true)
+    public List<MovieDetailDto> getLikedMovies(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다: " + email));
+
+        // MovieLikeService를 통해 좋아요한 영화 목록 조회
+        return movieLikeService.getLikedMoviesByUser(email);
     }
 }
