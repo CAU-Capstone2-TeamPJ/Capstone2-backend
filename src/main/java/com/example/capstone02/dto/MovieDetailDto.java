@@ -8,7 +8,9 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Data
@@ -31,6 +33,9 @@ public class MovieDetailDto {
     private List<GenreDto> genres = new ArrayList<>();
     private List<CastDto> cast = new ArrayList<>();
     private List<ImageDto> images = new ArrayList<>();
+
+    // 영화 촬영지 국가 목록 추가
+    private Set<String> filmingCountries = new HashSet<>();
 
     // 좋아요 관련 필드 추가
     private Integer likesCount;
@@ -88,6 +93,15 @@ public class MovieDetailDto {
                 ))
                 .collect(Collectors.toList());
 
+        // 촬영지 국가 목록 추출
+        Set<String> filmingCountries = new HashSet<>();
+        if (movie.getFilmingLocations() != null && !movie.getFilmingLocations().isEmpty()) {
+            filmingCountries = movie.getFilmingLocations().stream()
+                    .map(location -> location.getCountry())
+                    .filter(country -> country != null && !country.isEmpty())
+                    .collect(Collectors.toSet());
+        }
+
         return MovieDetailDto.builder()
                 .id(movie.getId())
                 .title(movie.getTitle())
@@ -104,6 +118,7 @@ public class MovieDetailDto {
                 .genres(genreDtos)
                 .cast(castDtos)
                 .images(imageDtos)
+                .filmingCountries(filmingCountries)  // 촬영지 국가 설정
                 .likesCount(0)  // 기본값 설정
                 .isLiked(false) // 기본값 설정
                 .build();

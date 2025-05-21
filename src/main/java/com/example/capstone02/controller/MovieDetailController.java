@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/movies")
@@ -26,11 +27,12 @@ public class MovieDetailController {
     /**
      * 영화 상세 정보를 조회하는 엔드포인트.
      * 데이터베이스에 없는 경우 TMDB API에서 자동으로 가져와 저장 후 반환
+     * 촬영지 국가 정보도 함께 반환
      */
     @GetMapping("/{movieId}")
     public ResponseEntity<?> getMovieDetail(@PathVariable Long movieId) {
         try {
-            // 데이터베이스에서 영화 정보 조회 시도
+            // 데이터베이스에서 영화 정보 조회 시도 (촬영지 국가 정보 포함)
             MovieDetailDto movieDetail = movieDetailService.getMovieDetail(movieId);
 
             // 현재 사용자의 좋아요 상태 및 전체 좋아요 수 조회
@@ -40,6 +42,16 @@ public class MovieDetailController {
             // 좋아요 정보 추가
             movieDetail.setLikesCount(likeInfo.getLikesCount());
             movieDetail.setIsLiked(likeInfo.getIsLiked());
+
+            // 로그에 촬영지 국가 정보 출력
+            Set<String> filmingCountries = movieDetail.getFilmingCountries();
+            if (filmingCountries != null && !filmingCountries.isEmpty()) {
+                log.info("영화 ID {} ({})의 촬영지 국가: {}",
+                        movieId, movieDetail.getTitle(), String.join(", ", filmingCountries));
+            } else {
+                log.info("영화 ID {} ({})의 촬영지 국가 정보가 없습니다",
+                        movieId, movieDetail.getTitle());
+            }
 
             return ResponseEntity.ok(movieDetail);
         } catch (RuntimeException e) {
@@ -142,6 +154,44 @@ public class MovieDetailController {
                 "totalCount", movieIds.size(),
                 "message", count + "개 영화에 대한 정보 요청이 시작되었습니다. 완료까지 몇 분이 소요될 수 있습니다."
         ));
+    }
+
+    /**
+     * 영화 ID로 촬영지 국가 정보만 조회하는 API 추가
+     */
+    @GetMapping("/{movieId}/filming-countries")
+    public ResponseEntity<?> getFilmingCountries(@PathVariable Long movieId) {
+        try {
+            MovieDetailDto movieDetail = movieDetailService.getMovieDetail(movieId);
+            Set<String> filmingCountries = movieDetail.getFilmingCountries();
+
+            if (filmingCountries != null && !filmingCountries.isEmpty()) {
+                log.info("영화 ID {} ({})의 촬영지 국가: {}",
+                        movieId, movieDetail.getTitle(), String.join(", ", filmingCountries));
+
+                return ResponseEntity.ok(Map.of(
+                        "movieId", movieId,
+                        "title", movieDetail.getTitle(),
+                        "filmingCountries", filmingCountries
+                ));
+            } else {
+                log.info("영화 ID {} ({})의 촬영지 국가 정보가 없습니다",
+                        movieId, movieDetail.getTitle());
+
+                return ResponseEntity.ok(Map.of(
+                        "movieId", movieId,
+                        "title", movieDetail.getTitle(),
+                        "filmingCountries", List.of(),
+                        "message", "촬영지 국가 정보가 없습니다."
+                ));
+            }
+        } catch (RuntimeException e) {
+            log.error("영화 ID {}의 촬영지 국가 정보 조회 중 오류 발생: {}", movieId, e.getMessage());
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "영화 정보를 가져오는 중 오류가 발생했습니다",
+                    "message", e.getMessage()
+            ));
+        }
     }
 
     /**

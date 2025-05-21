@@ -203,9 +203,12 @@ public class MovieDetailService {
         );
     }
 
+    /**
+     * 영화 ID로 영화 상세 정보 조회 (촬영지 국가 정보 포함)
+     */
     @Transactional(readOnly = true)
     public MovieDetailDto getMovieDetail(Long movieId) {
-        return movieRepository.findById(movieId)
+        return movieRepository.findByIdWithFilmingLocations(movieId)
                 .map(MovieDetailDto::fromEntity)
                 .orElseThrow(() -> new RuntimeException("영화를 찾을 수 없습니다: " + movieId));
     }
