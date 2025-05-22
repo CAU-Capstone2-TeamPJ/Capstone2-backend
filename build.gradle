@@ -51,6 +51,11 @@ dependencies {
     // 다른 OS용 Netty DNS 리졸버도 추가
     implementation 'io.netty:netty-transport-native-epoll:4.1.119.Final:linux-x86_64'
     implementation 'io.netty:netty-transport-native-epoll:4.1.119.Final:linux-aarch_64'
+
+    implementation 'com.google.maps:google-maps-services:2.2.0'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
 }
 
 tasks.named('test') {
