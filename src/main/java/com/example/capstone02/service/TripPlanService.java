@@ -354,4 +354,48 @@ public class TripPlanService {
 
         return tripPlanDtos;
     }
+
+    /**
+     * 여행 이름만 수정
+     */
+    @Transactional
+    public TripPlan updateTripPlanName(Long tripPlanId, String newName, String userEmail) {
+        String logPrefix = "[여행이름수정][" + tripPlanId + "]";
+        log.info("{} 여행 ID {}의 이름 수정 요청 - 새 이름: '{}', 사용자: {}",
+                logPrefix, tripPlanId, newName, userEmail);
+
+        // 1. 여행 계획 조회
+        TripPlan tripPlan = tripPlanRepository.findById(tripPlanId)
+                .orElseThrow(() -> new RuntimeException("여행 계획을 찾을 수 없습니다: " + tripPlanId));
+
+        // 2. 사용자 권한 확인
+        if (!tripPlan.getUser().getEmail().equals(userEmail)) {
+            log.warn("{} 권한 없음 - 여행 소유자: {}, 요청자: {}",
+                    logPrefix, tripPlan.getUser().getEmail(), userEmail);
+            throw new RuntimeException("해당 여행 계획을 수정할 권한이 없습니다.");
+        }
+
+        // 3. 여행 이름 유효성 검사
+        if (newName == null || newName.trim().isEmpty()) {
+            throw new RuntimeException("여행 이름을 입력해주세요.");
+        }
+
+        if (newName.trim().length() > 100) { // 예시 길이 제한
+            throw new RuntimeException("여행 이름은 100자를 초과할 수 없습니다.");
+        }
+
+        // 4. 이전 이름 저장 (로그용)
+        String oldName = tripPlan.getName();
+
+        // 5. 여행 이름 수정
+        tripPlan.setName(newName.trim());
+
+        // 6. 저장
+        TripPlan updatedTripPlan = tripPlanRepository.save(tripPlan);
+
+        log.info("{} 여행 이름 수정 완료 - 이전: '{}' -> 새 이름: '{}'",
+                logPrefix, oldName, newName.trim());
+
+        return updatedTripPlan;
+    }
 }

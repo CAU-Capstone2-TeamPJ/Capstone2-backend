@@ -100,7 +100,7 @@ public class GoogleMapsService {
             String url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json";
 
             String finalUrl = url + "?location=" + latitude + "," + longitude +
-                    "&radius=50" +  // 50m 반경
+                    "&radius=500" +  // 500m 반경
                     "&key=" + apiKey;
 
             // WebClient로 Google Places API 호출
@@ -111,10 +111,10 @@ public class GoogleMapsService {
                     .block();
 
             if (result != null && result.getResults() != null) {
-                // 최대 10개 이미지만 가져오기
+                // 최대 20개 이미지만 가져오기
                 result.getResults().stream()
                         .filter(place -> place.getPhotos() != null && !place.getPhotos().isEmpty())
-                        .limit(10)
+                        .limit(20)
                         .forEach(place -> {
                             String photoReference = place.getPhotos().get(0).getPhotoReference();
                             String photoUrl = "https://maps.googleapis.com/maps/api/place/photo"
@@ -125,12 +125,12 @@ public class GoogleMapsService {
                         });
             }
 
-            // 이미지를 찾지 못했을 경우 더미 이미지 URL 생성
-            if (imageUrls.isEmpty()) {
-                for (int i = 0; i < 10; i++) {
-                    imageUrls.add(generateDummyImageUrl(latitude, longitude, i));
-                }
-            }
+//            // 이미지를 찾지 못했을 경우 더미 이미지 URL 생성
+//            if (imageUrls.isEmpty()) {
+//                for (int i = 0; i < 10; i++) {
+//                    imageUrls.add(generateDummyImageUrl(latitude, longitude, i));
+//                }
+//            }
 
             return imageUrls;
         } catch (Exception e) {

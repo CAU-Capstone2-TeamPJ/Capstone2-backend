@@ -6,12 +6,15 @@ import com.example.capstone02.entity.TripPlan;
 import com.example.capstone02.service.TripPlanService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -158,4 +161,66 @@ public class TripPlanController {
         private String name;  // 여행 계획 이름
         private TripPlanRequestDto tripPlanRequest;  // 여행 계획 요청 정보
     }
+
+    /**
+     * 여행 이름 수정
+     */
+    @PatchMapping("/{tripPlanId}/name")
+    public ResponseEntity<?> updateTripPlanName(
+            @PathVariable Long tripPlanId,
+            @RequestBody Map<String, String> requestBody) {
+
+        String logPrefix = "[여행이름수정API][" + tripPlanId + "]";
+        log.info("{} 여행 이름 수정 요청", logPrefix);
+
+        // 현재 사용자 이메일 가져오기
+        String userEmail = getCurrentUserEmail();
+        if (userEmail == null) {
+            log.warn("{} 사용자 인증 정보를 찾을 수 없습니다", logPrefix);
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "로그인이 필요합니다."));
+        }
+
+        // 요청 데이터 검증
+        String newName = requestBody.get("name");
+        if (newName == null || newName.trim().isEmpty()) {
+            log.warn("{} 여행 이름이 제공되지 않았습니다", logPrefix);
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "여행 이름을 입력해주세요."));
+        }
+
+        try {
+            // 여행 이름 수정
+            TripPlan updatedTripPlan = tripPlanService.updateTripPlanName(tripPlanId, newName, userEmail);
+
+            log.info("{} 여행 이름 수정 성공 - 새 이름: '{}'", logPrefix, newName);
+
+            // 성공 응답
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("tripPlanId", updatedTripPlan.getId());
+            response.put("name", updatedTripPlan.getName());
+            response.put("message", "여행 이름이 성공적으로 수정되었습니다.");
+            response.put("updatedAt", updatedTripPlan.getUpdatedAt());
+
+            return ResponseEntity.ok(response);
+
+        } catch (RuntimeException e) {
+            log.error("{} 여행 이름 수정 실패: {}", logPrefix, e.getMessage());
+
+            // 오류 응답
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("error", e.getMessage());
+
+            if (e.getMessage().contains("권한이 없습니다")) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorResponse);
+            } else if (e.getMessage().contains("찾을 수 없습니다")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+            } else {
+                return ResponseEntity.badRequest().body(errorResponse);
+            }
+        }
+    }
+
 }

@@ -28,6 +28,11 @@ public class TripPlanningService {
     private static final int MAX_ITERATIONS = 100; // K-means 최대 반복 횟수
     private static final String NIGHT_VIEW_KEYWORD = "야경"; // 야경 키워드
 
+    // 하루 최소 방문 장소 수
+    private static final int MIN_LOCATIONS_PER_DAY = 4;
+    // 하루 최대 방문 장소 수
+    private static final int MAX_LOCATIONS_PER_DAY = 6;
+
     /**
      * 여행 경로 계획 생성
      */
@@ -76,15 +81,26 @@ public class TripPlanningService {
         // 5. K-means++ 클러스터링 수행
         int travelMinutesPerDay = (request.getTravelHours() != null ? request.getTravelHours() : 8) * MINUTES_PER_HOUR;
         int totalTravelTime = calculateTotalTravelTime(allLocations, distanceMatrix);
-        int k = Math.max(1, (int) Math.ceil((double) totalTravelTime / travelMinutesPerDay));
 
-        log.info("클러스터링 설정 - 총 이동 시간: {}분, 하루 여행 시간: {}분, 필요한 일수(k): {}",
-                totalTravelTime, travelMinutesPerDay, k);
+        // 최소 일수 계산 (이동 시간 기준)
+        int minDaysBasedOnTime = Math.max(1, (int) Math.ceil((double) totalTravelTime / travelMinutesPerDay));
+
+        // 최소 일수 계산 (장소 수 기준)
+        int minDaysBasedOnLocations = Math.max(1, (int) Math.ceil((double) allLocations.size() / MAX_LOCATIONS_PER_DAY));
+
+        // 두 기준 중 더 큰 값을 선택하여 클러스터 수 결정
+        int k = Math.max(minDaysBasedOnTime, minDaysBasedOnLocations);
+
+        log.info("클러스터링 설정 - 총 이동 시간: {}분, 하루 여행 시간: {}분, 장소 수: {}, 필요한 일수(k): {}",
+                totalTravelTime, travelMinutesPerDay, allLocations.size(), k);
 
         Map<Integer, List<FilmingLocation>> clusters = performKMeansPlusPlus(
                 allLocations, k, distanceMatrix, request.getOriginLat(), request.getOriginLng());
 
-        // 6. 각 클러스터 내에서 야경 키워드 있는 장소를 마지막으로 설정하여 경로 계산
+        // 6. 클러스터 내 장소 수 밸런싱 및 재조정
+        clusters = balanceLocationsPerDay(clusters, distanceMatrix, request.getOriginLat(), request.getOriginLng());
+
+        // 7. 각 클러스터 내에서 야경 키워드 있는 장소를 마지막으로 설정하여 경로 계산
         List<TripPlanResponseDto.DailyRouteDto> dailyRoutes = new ArrayList<>();
         int totalLocations = 0;
         int totalTravelTimeMinutes = 0;
@@ -112,17 +128,287 @@ public class TripPlanningService {
             totalTravelTimeMinutes += dailyRoute.getTravelTimeMinutes();
         }
 
-        // 7. 클러스터 간 방문 순서 최적화 (출발지에서 각 클러스터 첫 장소까지의 거리 기준)
+        // 8. 클러스터 간 방문 순서 최적화 (출발지에서 각 클러스터 첫 장소까지의 거리 기준)
         List<TripPlanResponseDto.DailyRouteDto> optimizedRoutes = optimizeClusterOrder(
                 dailyRoutes, allLocations, distanceMatrix, request.getOriginLat(), request.getOriginLng());
 
-        // 8. 최종 여행 계획 구성
+        // 9. 최종 여행 계획 구성
         return TripPlanResponseDto.builder()
                 .dailyRoutes(optimizedRoutes)
                 .totalDays(optimizedRoutes.size())
                 .totalLocations(totalLocations)
                 .totalTravelTimeMinutes(totalTravelTimeMinutes)
                 .build();
+    }
+
+    /**
+     * 하루에 방문할 장소 수 밸런싱
+     * - 하루 최소 MIN_LOCATIONS_PER_DAY, 최대 MAX_LOCATIONS_PER_DAY 장소 방문 보장
+     */
+    private Map<Integer, List<FilmingLocation>> balanceLocationsPerDay(
+            Map<Integer, List<FilmingLocation>> clusters,
+            List<LocationDistanceInfo> distanceMatrix,
+            Double originLat, Double originLng) {
+
+        log.info("하루 방문 장소 수 밸런싱 시작: MIN={}, MAX={}", MIN_LOCATIONS_PER_DAY, MAX_LOCATIONS_PER_DAY);
+
+        // 클러스터 정보 로깅
+        for (int clusterId : clusters.keySet()) {
+            log.info("클러스터 {} - 방문 장소 수: {}", clusterId, clusters.get(clusterId).size());
+        }
+
+        // 밸런싱이 필요한지 확인
+        boolean needsBalancing = false;
+        for (List<FilmingLocation> locations : clusters.values()) {
+            if (locations.size() > MAX_LOCATIONS_PER_DAY) {
+                needsBalancing = true;
+                break;
+            }
+        }
+
+        if (!needsBalancing) {
+            log.info("모든 일자가 최대 장소 수({})를 초과하지 않습니다. 밸런싱 건너뜀", MAX_LOCATIONS_PER_DAY);
+            return clusters;
+        }
+
+        // 방문 장소 수에 따라 클러스터 정렬 (내림차순)
+        List<Map.Entry<Integer, List<FilmingLocation>>> sortedClusters = clusters.entrySet().stream()
+                .sorted((e1, e2) -> Integer.compare(e2.getValue().size(), e1.getValue().size()))
+                .collect(Collectors.toList());
+
+        // 새로운 클러스터 맵 생성
+        Map<Integer, List<FilmingLocation>> balancedClusters = new HashMap<>();
+        int nextClusterId = clusters.size();
+
+        for (Map.Entry<Integer, List<FilmingLocation>> entry : sortedClusters) {
+            int clusterId = entry.getKey();
+            List<FilmingLocation> locations = new ArrayList<>(entry.getValue());
+
+            // 최대 장소 수를 초과하는 경우 분할
+            while (locations.size() > MAX_LOCATIONS_PER_DAY) {
+                // 새 클러스터에 들어갈 장소 수 결정 (가능한 최소 장소 수부터 시작)
+                int locationsToMove = Math.min(
+                        MIN_LOCATIONS_PER_DAY,
+                        locations.size() - MAX_LOCATIONS_PER_DAY
+                );
+
+                // 가장 멀리 있는 장소들 선택 (현재 클러스터의 중심점에서 가장 거리가 먼 장소들)
+                FilmingLocation center = findClusterCenter(locations, distanceMatrix);
+                List<FilmingLocation> locationsToSplit = findFarthestLocations(
+                        center, locations, locationsToMove, distanceMatrix);
+
+                // 기존 클러스터에서 제거
+                locations.removeAll(locationsToSplit);
+
+                // 새 클러스터 생성
+                balancedClusters.put(nextClusterId, locationsToSplit);
+                log.info("클러스터 {} 분할: {}개 장소를 새 클러스터 {}로 이동",
+                        clusterId, locationsToSplit.size(), nextClusterId);
+
+                nextClusterId++;
+            }
+
+            // 남은 장소들을 원래 클러스터에 할당
+            balancedClusters.put(clusterId, locations);
+        }
+
+        // 분할 후 너무 적은 장소를 가진 클러스터 확인 및 병합 시도
+        balancedClusters = mergeSmallerClusters(balancedClusters, distanceMatrix);
+
+        // 최종 클러스터 정보 로깅
+        for (int clusterId : balancedClusters.keySet()) {
+            log.info("밸런싱 후 클러스터 {} - 방문 장소 수: {}", clusterId, balancedClusters.get(clusterId).size());
+        }
+
+        return balancedClusters;
+    }
+
+    /**
+     * 장소가 적은 클러스터들을 병합
+     */
+    private Map<Integer, List<FilmingLocation>> mergeSmallerClusters(
+            Map<Integer, List<FilmingLocation>> clusters,
+            List<LocationDistanceInfo> distanceMatrix) {
+
+        // 장소 수가 MIN_LOCATIONS_PER_DAY보다 적은 클러스터만 필터링
+        List<Map.Entry<Integer, List<FilmingLocation>>> smallClusters = clusters.entrySet().stream()
+                .filter(e -> e.getValue().size() < MIN_LOCATIONS_PER_DAY)
+                .sorted(Comparator.comparingInt(e -> e.getValue().size()))  // 오름차순 정렬 (가장 작은 것부터)
+                .collect(Collectors.toList());
+
+        if (smallClusters.isEmpty()) {
+            return clusters;  // 병합 필요 없음
+        }
+
+        log.info("병합 대상 소규모 클러스터: {}개", smallClusters.size());
+
+        // 결과 클러스터 맵 초기화
+        Map<Integer, List<FilmingLocation>> mergedClusters = new HashMap<>(clusters);
+
+        // 각 작은 클러스터에 대해 병합 시도
+        for (Map.Entry<Integer, List<FilmingLocation>> smallCluster : smallClusters) {
+            int smallClusterId = smallCluster.getKey();
+            List<FilmingLocation> smallLocations = smallCluster.getValue();
+
+            // 이미 다른 클러스터에 병합되었는지 확인
+            if (!mergedClusters.containsKey(smallClusterId)) {
+                continue;
+            }
+
+            // 가장 가까운 클러스터 찾기
+            int bestTargetClusterId = -1;
+            double bestCompatibility = Double.MIN_VALUE;
+
+            for (Map.Entry<Integer, List<FilmingLocation>> targetEntry : mergedClusters.entrySet()) {
+                int targetClusterId = targetEntry.getKey();
+                List<FilmingLocation> targetLocations = targetEntry.getValue();
+
+                // 자기 자신이거나 이미 최대 장소 수에 도달한 클러스터는 제외
+                if (targetClusterId == smallClusterId ||
+                        targetLocations.size() + smallLocations.size() > MAX_LOCATIONS_PER_DAY) {
+                    continue;
+                }
+
+                // 두 클러스터 간의 호환성 점수 계산 (평균 거리의 역수, 점수가 높을수록 가까움)
+                double averageDistance = calculateAverageDistance(
+                        smallLocations, targetLocations, distanceMatrix);
+                double compatibility = 1.0 / (averageDistance + 1.0);  // 0 나누기 방지
+
+                if (compatibility > bestCompatibility) {
+                    bestCompatibility = compatibility;
+                    bestTargetClusterId = targetClusterId;
+                }
+            }
+
+            // 병합할 클러스터를 찾았으면 병합 수행
+            if (bestTargetClusterId != -1) {
+                List<FilmingLocation> targetLocations = mergedClusters.get(bestTargetClusterId);
+                targetLocations.addAll(smallLocations);
+                mergedClusters.remove(smallClusterId);
+
+                log.info("클러스터 {} ({}개 장소)를 클러스터 {}에 병합. 병합 후 장소 수: {}",
+                        smallClusterId, smallLocations.size(), bestTargetClusterId, targetLocations.size());
+            }
+        }
+
+        // 인덱스 재정렬 (빈 번호 제거)
+        Map<Integer, List<FilmingLocation>> reindexedClusters = new HashMap<>();
+        int index = 0;
+        for (List<FilmingLocation> locations : mergedClusters.values()) {
+            reindexedClusters.put(index++, locations);
+        }
+
+        return reindexedClusters;
+    }
+
+    /**
+     * 두 클러스터 간의 평균 거리 계산
+     */
+    private double calculateAverageDistance(
+            List<FilmingLocation> locations1,
+            List<FilmingLocation> locations2,
+            List<LocationDistanceInfo> distanceMatrix) {
+
+        if (locations1.isEmpty() || locations2.isEmpty()) {
+            return Double.MAX_VALUE;
+        }
+
+        double totalDistance = 0;
+        int count = 0;
+
+        for (FilmingLocation loc1 : locations1) {
+            for (FilmingLocation loc2 : locations2) {
+                int distance = distanceMatrix.stream()
+                        .filter(info ->
+                                info.getFromLocationId().equals(loc1.getId()) &&
+                                        info.getToLocationId().equals(loc2.getId()))
+                        .findFirst()
+                        .map(LocationDistanceInfo::getTravelTimeMinutes)
+                        .orElse(Integer.MAX_VALUE);
+
+                if (distance != Integer.MAX_VALUE) {
+                    totalDistance += distance;
+                    count++;
+                }
+            }
+        }
+
+        return count > 0 ? totalDistance / count : Double.MAX_VALUE;
+    }
+
+    /**
+     * 클러스터의 중심점 찾기 (모든 장소까지의 평균 거리가 최소인 장소)
+     */
+    private FilmingLocation findClusterCenter(
+            List<FilmingLocation> locations,
+            List<LocationDistanceInfo> distanceMatrix) {
+
+        if (locations.isEmpty()) {
+            return null;
+        }
+
+        if (locations.size() == 1) {
+            return locations.get(0);
+        }
+
+        return locations.stream()
+                .min(Comparator.comparingDouble(loc -> {
+                    double totalDistance = 0;
+                    int count = 0;
+
+                    for (FilmingLocation otherLoc : locations) {
+                        if (loc.equals(otherLoc)) continue;
+
+                        int distance = distanceMatrix.stream()
+                                .filter(info ->
+                                        info.getFromLocationId().equals(loc.getId()) &&
+                                                info.getToLocationId().equals(otherLoc.getId()))
+                                .findFirst()
+                                .map(LocationDistanceInfo::getTravelTimeMinutes)
+                                .orElse(0);
+
+                        totalDistance += distance;
+                        count++;
+                    }
+
+                    return count > 0 ? totalDistance / count : Double.MAX_VALUE;
+                }))
+                .orElse(locations.get(0));
+    }
+
+    /**
+     * 중심점에서 가장 멀리 있는 장소들 찾기
+     */
+    private List<FilmingLocation> findFarthestLocations(
+            FilmingLocation center,
+            List<FilmingLocation> locations,
+            int count,
+            List<LocationDistanceInfo> distanceMatrix) {
+
+        // 중심과의 거리를 기준으로 정렬 (내림차순)
+        return locations.stream()
+                .filter(loc -> !loc.equals(center))
+                .sorted((loc1, loc2) -> {
+                    int distance1 = distanceMatrix.stream()
+                            .filter(info ->
+                                    info.getFromLocationId().equals(center.getId()) &&
+                                            info.getToLocationId().equals(loc1.getId()))
+                            .findFirst()
+                            .map(LocationDistanceInfo::getTravelTimeMinutes)
+                            .orElse(0);
+
+                    int distance2 = distanceMatrix.stream()
+                            .filter(info ->
+                                    info.getFromLocationId().equals(center.getId()) &&
+                                            info.getToLocationId().equals(loc2.getId()))
+                            .findFirst()
+                            .map(LocationDistanceInfo::getTravelTimeMinutes)
+                            .orElse(0);
+
+                    return Integer.compare(distance2, distance1);
+                })
+                .limit(count)
+                .collect(Collectors.toList());
     }
 
     /**
