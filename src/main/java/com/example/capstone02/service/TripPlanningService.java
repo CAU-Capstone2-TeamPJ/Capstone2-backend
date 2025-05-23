@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
@@ -62,7 +63,12 @@ public class TripPlanningService {
         // 6. 각 클러스터에서 Open TSP 경로 계산 (야경 키워드 도착지 고정)
         List<TripPlanResponseDto.DailyRouteDto> dailyRoutes = createDailyRoutesWithOpenTSP(clusters, distanceMatrix);
 
-        // 7. 최종 응답 생성
+        // 7. 클러스터 순서 최적화 (출발지 기준)
+        if (request.getOriginLat() != null && request.getOriginLng() != null) {
+            dailyRoutes = optimizeClusterOrder(dailyRoutes, distanceMatrix, request.getOriginLat(), request.getOriginLng());
+        }
+
+        // 8. 최종 응답 생성
         return TripPlanResponseDto.builder()
                 .dailyRoutes(dailyRoutes)
                 .totalDays(dailyRoutes.size())
@@ -133,6 +139,12 @@ public class TripPlanningService {
 
         List<LocationDistanceInfo> travelTimes = locationTravelTimeService.getFilteredTravelTimes(movieId, locationIds);
         log.info("미리 계산된 이동시간 정보 {}개 로드", travelTimes.size());
+
+        // 출발지 정보 확인을 위한 로깅
+        long originCount = travelTimes.stream()
+                .filter(info -> info.getFromLocationId() == 0L)
+                .count();
+        log.info("출발지(ID=0)에서 출발하는 이동시간 정보: {}개", originCount);
 
         return travelTimes;
     }
@@ -481,9 +493,11 @@ public class TripPlanningService {
             if (nightViewLocation != null) {
                 // 도착지 고정 Open TSP
                 optimalRoute = solveOpenTSPWithFixedEnd(clusterLocations, nightViewLocation, travelTimeMap);
+                log.info("클러스터 {}: 야경 장소 '{}' 마지막으로 고정", day, nightViewLocation.getName());
             } else {
                 // 일반 Open TSP
                 optimalRoute = solveOpenTSP(clusterLocations, travelTimeMap);
+                log.info("클러스터 {}: 일반 Open TSP 적용", day);
             }
 
             // 일일 경로 DTO 생성
@@ -524,7 +538,7 @@ public class TripPlanningService {
         // 고정된 도착지 추가
         route.add(fixedEnd);
 
-        log.info("도착지 고정 Open TSP 완료: {} -> ... -> {}",
+        log.debug("도착지 고정 Open TSP 완료: {} -> ... -> {}",
                 route.get(0).getName(), fixedEnd.getName());
 
         return route;
@@ -555,7 +569,7 @@ public class TripPlanningService {
             current = nearest;
         }
 
-        log.info("Open TSP 완료: {}개 장소", route.size());
+        log.debug("Open TSP 완료: {}개 장소", route.size());
         return route;
     }
 
@@ -578,6 +592,121 @@ public class TripPlanningService {
         }
 
         return nearest != null ? nearest : candidates.get(0);
+    }
+
+    /**
+     * 클러스터 순서 최적화 (출발지 기준으로 가장 가까운 순서로 정렬)
+     */
+    private List<TripPlanResponseDto.DailyRouteDto> optimizeClusterOrder(
+            List<TripPlanResponseDto.DailyRouteDto> dailyRoutes,
+            List<LocationDistanceInfo> distanceMatrix,
+            Double originLat, Double originLng) {
+
+        if (dailyRoutes.size() <= 1) {
+            return dailyRoutes;
+        }
+
+        log.info("클러스터 순서 최적화 시작: {}개 클러스터, 출발지: ({}, {})",
+                dailyRoutes.size(), originLat, originLng);
+
+        // 출발지 정보가 없는 경우 하버사인 거리로 계산
+        boolean hasOriginData = distanceMatrix.stream()
+                .anyMatch(info -> info.getFromLocationId() == 0L);
+
+        Map<Integer, Double> distancesToOrigin = new HashMap<>();
+
+        if (hasOriginData) {
+            log.info("출발지 이동시간 정보 사용");
+            // 출발지에서 각 클러스터의 첫 번째 장소까지의 거리 계산 (DB 데이터 사용)
+            for (int i = 0; i < dailyRoutes.size(); i++) {
+                TripPlanResponseDto.DailyRouteDto route = dailyRoutes.get(i);
+                if (!route.getLocations().isEmpty()) {
+                    Long firstLocationId = route.getLocations().get(0).getLocationId();
+
+                    Integer distance = distanceMatrix.stream()
+                            .filter(info -> info.getFromLocationId() == 0L &&
+                                    info.getToLocationId().equals(firstLocationId))
+                            .findFirst()
+                            .map(LocationDistanceInfo::getTravelTimeMinutes)
+                            .orElse(Integer.MAX_VALUE);
+
+                    distancesToOrigin.put(i, distance.doubleValue());
+                    log.info("클러스터 {} 첫 장소 '{}' 출발지에서 거리: {}분",
+                            i, route.getLocations().get(0).getLocationName(), distance);
+                }
+            }
+        } else {
+            log.info("출발지 이동시간 정보가 없어 하버사인 거리로 계산");
+            // 하버사인 거리로 직접 계산
+            for (int i = 0; i < dailyRoutes.size(); i++) {
+                TripPlanResponseDto.DailyRouteDto route = dailyRoutes.get(i);
+                if (!route.getLocations().isEmpty()) {
+                    TripPlanResponseDto.LocationRouteDto firstLocation = route.getLocations().get(0);
+
+                    // 하버사인 거리 계산 (km)
+                    double distance = calculateHaversineDistanceFromOrigin(
+                            originLat, originLng,
+                            firstLocation.getLatitude(), firstLocation.getLongitude());
+
+                    distancesToOrigin.put(i, distance);
+                    log.info("클러스터 {} 첫 장소 '{}' 출발지에서 거리: {:.2f}km",
+                            i, firstLocation.getLocationName(), distance);
+                }
+            }
+        }
+
+        // 출발지에서 가까운 순서대로 정렬
+        List<Integer> clusterOrder = distancesToOrigin.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+        // 최적 순서대로 일정 재배치
+        List<TripPlanResponseDto.DailyRouteDto> optimizedRoutes = new ArrayList<>();
+        for (int i = 0; i < clusterOrder.size(); i++) {
+            int originalClusterId = clusterOrder.get(i);
+            TripPlanResponseDto.DailyRouteDto route = dailyRoutes.get(originalClusterId);
+
+            // 일차 번호 재조정
+            TripPlanResponseDto.DailyRouteDto updatedRoute = TripPlanResponseDto.DailyRouteDto.builder()
+                    .day(i + 1)
+                    .locations(route.getLocations())
+                    .travelTimeMinutes(route.getTravelTimeMinutes())
+                    .build();
+
+            optimizedRoutes.add(updatedRoute);
+
+            log.info("{}일차: 클러스터 {} (출발지에서 {})",
+                    i + 1, originalClusterId,
+                    hasOriginData ? distancesToOrigin.get(originalClusterId).intValue() + "분" :
+                            String.format("%.2fkm", distancesToOrigin.get(originalClusterId)));
+        }
+
+        log.info("클러스터 순서 최적화 완료: 원래순서 {} -> 최적순서 {}",
+                IntStream.range(0, dailyRoutes.size()).boxed().collect(Collectors.toList()),
+                clusterOrder);
+
+        return optimizedRoutes;
+    }
+
+    /**
+     * 출발지에서 특정 좌표까지의 하버사인 거리 계산 (km)
+     */
+    private double calculateHaversineDistanceFromOrigin(Double originLat, Double originLng,
+                                                        Double targetLat, Double targetLng) {
+        final double R = 6371; // 지구 반지름 (km)
+
+        double lat1Rad = Math.toRadians(originLat);
+        double lat2Rad = Math.toRadians(targetLat);
+        double deltaLat = Math.toRadians(targetLat - originLat);
+        double deltaLon = Math.toRadians(targetLng - originLng);
+
+        double a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+                Math.cos(lat1Rad) * Math.cos(lat2Rad) *
+                        Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
     /**
