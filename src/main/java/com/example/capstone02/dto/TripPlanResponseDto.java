@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 여행 경로 계획 응답 DTO
@@ -44,6 +45,8 @@ public class TripPlanResponseDto {
         private Integer travelTimeToNext; // 다음 장소까지 이동 시간 (분 단위)
         private Integer travelDistanceToNext; // 다음 장소까지 이동 거리 (미터 단위)
         private List<String> recommendationKeywords; // 추천 키워드
+        private List<String> nearbyKeywords; // 주변 키워드 추가
+        private Map<String, String> nearbyPlaceIds; // 주변 장소 ID 맵 추가
         private String concept;           // 관련 컨셉
         private List<String> images;      // 장소 이미지 URL 목록 (추가)
     }

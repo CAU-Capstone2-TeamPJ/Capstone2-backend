@@ -742,6 +742,13 @@ public class TripPlanningService {
             // 이미지 가져오기
             List<String> images = getLocationImages(location);
 
+            // 주변 키워드와 주변 장소 ID 정보 설정
+            List<String> nearbyKeywords = location.getNearbyKeywords() != null ?
+                    new ArrayList<>(location.getNearbyKeywords()) : new ArrayList<>();
+
+            Map<String, String> nearbyPlaceIds = location.getNearbyPlaceIds() != null ?
+                    new HashMap<>(location.getNearbyPlaceIds()) : new HashMap<>();
+
             TripPlanResponseDto.LocationRouteDto locationRouteDto = TripPlanResponseDto.LocationRouteDto.builder()
                     .locationId(location.getId())
                     .locationName(location.getName())
@@ -751,6 +758,8 @@ public class TripPlanningService {
                     .visitOrder(i + 1)
                     .travelTimeToNext(travelTimeToNext)
                     .recommendationKeywords(location.getRecommendationKeywords())
+                    .nearbyKeywords(nearbyKeywords)    // 주변 키워드 추가
+                    .nearbyPlaceIds(nearbyPlaceIds)    // 주변 장소 ID 추가
                     .concept(concept)
                     .images(images)
                     .build();
@@ -764,6 +773,7 @@ public class TripPlanningService {
                 .travelTimeMinutes(totalTravelTime)
                 .build();
     }
+
 
     /**
      * 장소 이미지 가져오기 (수정된 GoogleMapsService 사용)

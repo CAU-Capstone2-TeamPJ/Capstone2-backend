@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Data
@@ -62,7 +63,9 @@ public class TripPlanDto {
         private Integer travelDistanceToNext;
         private String concept;
         private List<String> recommendationKeywords;
-        private List<String> images; // 장소 이미지 URL 목록 추가
+        private List<String> nearbyKeywords; // 주변 키워드 추가
+        private Map<String, String> nearbyPlaceIds; // 주변 장소 ID 맵 추가
+        private List<String> images; // 장소 이미지 URL 목록
     }
 
     @Data
@@ -153,6 +156,8 @@ public class TripPlanDto {
                 .travelDistanceToNext(tripLocation.getTravelDistanceToNext())
                 .concept(tripLocation.getConcept())
                 .recommendationKeywords(tripLocation.getRecommendationKeywords())
+                .nearbyKeywords(new ArrayList<>()) // 빈 리스트로 초기화 (서비스에서 설정)
+                .nearbyPlaceIds(null) // 기본값 null (서비스에서 설정)
                 .images(new ArrayList<>()) // 기본적으로 빈 리스트로 초기화
                 .build();
     }

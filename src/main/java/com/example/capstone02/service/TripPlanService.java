@@ -288,7 +288,7 @@ public class TripPlanService {
     }
 
     /**
-     * 장소에 이미지 정보 추가
+     * 장소에 이미지 정보와 주변 정보 추가
      */
     private void addImagesForLocation(TripPlanDto.TripLocationDto locationDto) {
         try {
@@ -302,8 +302,9 @@ public class TripPlanService {
             Optional<FilmingLocation> filmingLocationOpt = filmingLocationRepository.findById(locationId);
             if (filmingLocationOpt.isPresent()) {
                 FilmingLocation filmingLocation = filmingLocationOpt.get();
+
+                // 원본 장소의 이미지 가져오기
                 if (filmingLocation.getImages() != null && !filmingLocation.getImages().isEmpty()) {
-                    // 원본 장소의 이미지 가져오기
                     locationDto.setImages(new ArrayList<>(filmingLocation.getImages()));
                     log.debug("장소 '{}' 이미지 {}개 추가됨", locationDto.getLocationName(), filmingLocation.getImages().size());
                 } else if (locationDto.getLatitude() != null && locationDto.getLongitude() != null) {
@@ -321,11 +322,25 @@ public class TripPlanService {
                                 locationDto.getLocationName(), e.getMessage());
                     }
                 }
+
+                // 주변 키워드 추가
+                if (filmingLocation.getNearbyKeywords() != null && !filmingLocation.getNearbyKeywords().isEmpty()) {
+                    locationDto.setNearbyKeywords(new ArrayList<>(filmingLocation.getNearbyKeywords()));
+                    log.debug("장소 '{}' 주변 키워드 {}개 추가됨",
+                            locationDto.getLocationName(), filmingLocation.getNearbyKeywords().size());
+                }
+
+                // 주변 장소 ID 추가
+                if (filmingLocation.getNearbyPlaceIds() != null && !filmingLocation.getNearbyPlaceIds().isEmpty()) {
+                    locationDto.setNearbyPlaceIds(filmingLocation.getNearbyPlaceIds());
+                    log.debug("장소 '{}' 주변 장소 ID {}개 추가됨",
+                            locationDto.getLocationName(), filmingLocation.getNearbyPlaceIds().size());
+                }
             } else {
                 log.warn("장소 ID {}에 해당하는 원본 촬영지 정보를 찾을 수 없습니다", locationId);
             }
         } catch (Exception e) {
-            log.error("장소 '{}' 이미지 정보 추가 중 오류 발생: {}",
+            log.error("장소 '{}' 정보 추가 중 오류 발생: {}",
                     locationDto.getLocationName(), e.getMessage());
         }
     }
